@@ -1,0 +1,24 @@
+# 依赖
+node_modules/
+
+# 构建产物
+build/
+dist/
+coverage/
+
+# 环境变量（包含敏感信息：API密钥、数据库密码等）
+.env*
+!.env.example
+
+# 本地数据库（包含用户数据）
+db.json
+
+# Claude Code 本地配置
+.claude/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log
