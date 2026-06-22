@@ -19,9 +19,20 @@ export default function Auth() {
   const [errorMsg, setErrorMsg] = useState('');
 
   const [showSuccessToast, setShowSuccessToast] = useState(false);
+  const [phoneError, setPhoneError] = useState('');
 
   const { setIsLoggedIn, setUserName } = useUser();
   const navigate = useNavigate();
+
+  // 验证手机号是否为11位数字
+  const validatePhone = (value: string): boolean => {
+    if (!/^\d{11}$/.test(value)) {
+      setPhoneError('手机号必须为11位数字');
+      return false;
+    }
+    setPhoneError('');
+    return true;
+  };
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,6 +54,8 @@ export default function Auth() {
           setErrorMsg(data.message || '用户名或密码错误');
         }
       } else {
+        // 注册时校验手机号
+        if (!validatePhone(phone)) return;
         const res = await fetch("/api/auth/register", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ username: name, password, phone })
@@ -311,11 +324,20 @@ export default function Auth() {
                       type="tel"
                       required
                       value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                      className="w-full pl-11 pr-4 py-3.5 bg-slate-50/50 border border-slate-200 hover:border-slate-300 rounded-2xl focus:ring-4 focus:ring-blue-100 focus:border-blue-500 focus:bg-white outline-none transition-all placeholder:text-slate-400 text-[15px] font-medium text-slate-700"
+                      onChange={(e) => {
+                        setPhone(e.target.value);
+                        if (phoneError) validatePhone(e.target.value);
+                      }}
+                      className={`w-full pl-11 pr-4 py-3.5 bg-slate-50/50 border rounded-2xl focus:ring-4 focus:ring-blue-100 focus:bg-white outline-none transition-all placeholder:text-slate-400 text-[15px] font-medium text-slate-700 ${phoneError ? 'border-red-300 focus:border-red-500 focus:ring-red-100' : 'border-slate-200 hover:border-slate-300 focus:border-blue-500'}`}
                       placeholder="请输入手机号"
                     />
                   </div>
+                  {phoneError && (
+                    <p className="mt-1.5 ml-1 text-[12px] text-red-500 font-medium flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" />
+                      {phoneError}
+                    </p>
+                  )}
                 </div>
               )}
 

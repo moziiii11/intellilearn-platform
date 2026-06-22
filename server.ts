@@ -1223,6 +1223,10 @@ async function startServer() {
     if (!username || !password || !phone) {
       return res.status(400).json({ success: false, message: "用户名、密码和手机号不能为空" });
     }
+    // 验证手机号必须是11位数字
+    if (!/^\d{11}$/.test(phone)) {
+      return res.status(400).json({ success: false, message: "手机号必须为11位数字" });
+    }
 
     // 优先使用 MySQL 存储
     if (mysqlAvailable) {
