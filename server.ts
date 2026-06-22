@@ -6,7 +6,8 @@ import dotenv from "dotenv";
 import rateLimit from "express-rate-limit";
 import fs from "fs";
 import { jsonrepair } from "jsonrepair";
-import { initMySQLDB, mysqlGetUser, mysqlCreateUser, mysqlUpdatePassword, mysqlVerifyUser, mysqlPing } from "./db-mysql.js";
+import bcrypt from "bcryptjs";
+import { initMySQLDB, mysqlGetUser, mysqlCreateUser, mysqlVerifyUser, mysqlVerifyPassword, mysqlPing } from "./db-mysql.js";
 
 dotenv.config();
 if (fs.existsSync(".env.example")) {
@@ -1197,11 +1198,11 @@ async function startServer() {
     // 优先使用 MySQL 验证
     if (mysqlAvailable) {
       const user = await mysqlGetUser(username);
-      if (user && user.password === password) {
+      if (user && await mysqlVerifyPassword(password, user.password)) {
         // 同步到 JSON DB，确保其他功能正常
         const db = readDB();
         if (!db.users[username]) {
-          db.users[username] = { password, birthday: user.birthday, primarySchool: user.primarySchool };
+          db.users[username] = { password, phone: user.phone };
           writeDB(db);
         }
         return res.json({ success: true, token: "token_" + username, username });
@@ -1211,7 +1212,7 @@ async function startServer() {
 
     // 回退到 JSON DB
     const db = readDB();
-    if (db.users[username] && db.users[username].password === password) {
+    if (db.users[username] && await bcrypt.compare(password, db.users[username].password)) {
       res.json({ success: true, token: "token_" + username, username });
     } else {
       res.status(401).json({ success: false, message: "用户名或密码错误" });
@@ -1236,7 +1237,8 @@ async function startServer() {
       }
       // 同步到 JSON DB，确保其他功能正常
       const db = readDB();
-      db.users[username] = { password, phone };
+      const hashedPwd = await bcrypt.hash(password, 10);
+      db.users[username] = { password: hashedPwd, phone };
       writeDB(db);
       return res.json({ success: true, message: "注册成功" });
     }
@@ -1246,7 +1248,8 @@ async function startServer() {
     if (db.users[username]) {
       res.status(400).json({ success: false, message: "用户名已存在" });
     } else {
-      db.users[username] = { password, phone };
+      const hashedPwd2 = await bcrypt.hash(password, 10);
+      db.users[username] = { password: hashedPwd2, phone };
       writeDB(db);
       res.json({ success: true, message: "注册成功" });
     }
@@ -1269,7 +1272,8 @@ async function startServer() {
       // 同步到 JSON DB
       const db = readDB();
       if (updateResult.success && updateResult.username && db.users[updateResult.username]) {
-        db.users[updateResult.username].password = newPassword;
+        const hashedNewPwd = await bcrypt.hash(newPassword, 10);
+        db.users[updateResult.username].password = hashedNewPwd;
         writeDB(db);
       }
       return res.json({ success: true, message: "密码重置成功" });
@@ -1286,7 +1290,8 @@ async function startServer() {
     }
 
     if (foundUsername) {
-      db.users[foundUsername].password = newPassword;
+      const hashedNewPwd3 = await bcrypt.hash(newPassword, 10);
+      db.users[foundUsername].password = hashedNewPwd3;
       writeDB(db);
       res.json({ success: true, message: "密码重置成功" });
     } else {

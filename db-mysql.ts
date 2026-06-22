@@ -1,5 +1,6 @@
 import mysql from "mysql2/promise";
 import dotenv from "dotenv";
+import bcrypt from "bcryptjs";
 
 dotenv.config();
 
@@ -9,7 +10,7 @@ const pool = mysql.createPool({
   port: Number(process.env.MYSQL_PORT) || 3306,
   user: process.env.MYSQL_USER || "root",
   password: process.env.MYSQL_PASSWORD || "",
-  database: process.env.MYSQL_DATABASE || "intellilearn",
+  database: process.env.MYSQL_DATABASE || "www_db",
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
@@ -27,8 +28,6 @@ export async function initMySQLDB(): Promise<boolean> {
           username VARCHAR(100) NOT NULL UNIQUE,
           password VARCHAR(255) NOT NULL,
           phone VARCHAR(20) DEFAULT '',
-          birthday VARCHAR(50) DEFAULT '',
-          primary_school VARCHAR(100) DEFAULT '',
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
           INDEX idx_username (username),
@@ -92,9 +91,10 @@ export async function mysqlCreateUser(
   phone: string = ""
 ): Promise<boolean> {
   try {
+    const hashedPassword = await bcrypt.hash(password, 10);
     await pool.execute(
       "INSERT INTO users (username, password, phone) VALUES (?, ?, ?)",
-      [username, password, phone]
+      [username, hashedPassword, phone]
     );
     console.log(`[MySQL] User created: ${username}`);
     return true;
@@ -119,9 +119,10 @@ export async function mysqlUpdatePasswordByPhone(
     if (rows.length === 0) return { success: false };
     const username = rows[0].username;
 
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
     const [result] = await pool.execute<any>(
       "UPDATE users SET password = ? WHERE phone = ?",
-      [newPassword, phone]
+      [hashedPassword, phone]
     );
     return { success: result.affectedRows > 0, username };
   } catch (e: any) {
@@ -157,6 +158,18 @@ export async function mysqlVerifyUserByPhone(
     return rows.length > 0;
   } catch (e: any) {
     console.error("[MySQL] Error verifying user by phone:", e.message);
+    return false;
+  }
+}
+
+export async function mysqlVerifyPassword(
+  plainPassword: string,
+  hashedPassword: string
+): Promise<boolean> {
+  try {
+    return await bcrypt.compare(plainPassword, hashedPassword);
+  } catch (e: any) {
+    console.error("[MySQL] Error verifying password:", e.message);
     return false;
   }
 }
