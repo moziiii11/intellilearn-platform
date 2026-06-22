@@ -26,13 +26,29 @@ export async function initMySQLDB(): Promise<boolean> {
           id INT AUTO_INCREMENT PRIMARY KEY,
           username VARCHAR(100) NOT NULL UNIQUE,
           password VARCHAR(255) NOT NULL,
+          phone VARCHAR(20) DEFAULT '',
           birthday VARCHAR(50) DEFAULT '',
           primary_school VARCHAR(100) DEFAULT '',
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-          INDEX idx_username (username)
+          INDEX idx_username (username),
+          INDEX idx_phone (phone)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
+      
+      // Attempt to add phone column if it was created before this update
+      try {
+        await connection.execute(`ALTER TABLE users ADD COLUMN phone VARCHAR(20) DEFAULT ''`);
+      } catch (e: any) {
+        // Ignore "Duplicate column name" error
+      }
+      
+      try {
+        await connection.execute(`ALTER TABLE users ADD INDEX idx_phone (phone)`);
+      } catch (e: any) {
+        // Ignore "Duplicate key name" error
+      }
+
       console.log("[MySQL] Database tables initialized successfully");
       return true;
     } finally {
@@ -50,12 +66,11 @@ export async function initMySQLDB(): Promise<boolean> {
 export async function mysqlGetUser(username: string): Promise<{
   username: string;
   password: string;
-  birthday: string;
-  primarySchool: string;
+  phone: string;
 } | null> {
   try {
     const [rows] = await pool.execute<any[]>(
-      "SELECT username, password, birthday, primary_school FROM users WHERE username = ?",
+      "SELECT username, password, phone FROM users WHERE username = ?",
       [username]
     );
     if (rows.length === 0) return null;
@@ -63,8 +78,7 @@ export async function mysqlGetUser(username: string): Promise<{
     return {
       username: row.username,
       password: row.password,
-      birthday: row.birthday || "",
-      primarySchool: row.primary_school || "",
+      phone: row.phone || "",
     };
   } catch (e: any) {
     console.error("[MySQL] Error getting user:", e.message);
@@ -75,13 +89,12 @@ export async function mysqlGetUser(username: string): Promise<{
 export async function mysqlCreateUser(
   username: string,
   password: string,
-  birthday: string = "",
-  primarySchool: string = ""
+  phone: string = ""
 ): Promise<boolean> {
   try {
     await pool.execute(
-      "INSERT INTO users (username, password, birthday, primary_school) VALUES (?, ?, ?, ?)",
-      [username, password, birthday, primarySchool]
+      "INSERT INTO users (username, password, phone) VALUES (?, ?, ?)",
+      [username, password, phone]
     );
     console.log(`[MySQL] User created: ${username}`);
     return true;
@@ -95,35 +108,55 @@ export async function mysqlCreateUser(
   }
 }
 
-export async function mysqlUpdatePassword(
-  username: string,
+export async function mysqlUpdatePasswordByPhone(
+  phone: string,
   newPassword: string
-): Promise<boolean> {
+): Promise<{ success: boolean; username?: string }> {
   try {
+    // Note: If multiple users have the same phone, this updates all or just the first matched
+    // Usually phone is unique, but we didn't add unique constraint for phone
+    const [rows] = await pool.execute<any[]>("SELECT username FROM users WHERE phone = ? LIMIT 1", [phone]);
+    if (rows.length === 0) return { success: false };
+    const username = rows[0].username;
+
     const [result] = await pool.execute<any>(
-      "UPDATE users SET password = ? WHERE username = ?",
-      [newPassword, username]
+      "UPDATE users SET password = ? WHERE phone = ?",
+      [newPassword, phone]
     );
-    return result.affectedRows > 0;
+    return { success: result.affectedRows > 0, username };
   } catch (e: any) {
-    console.error("[MySQL] Error updating password:", e.message);
-    return false;
+    console.error("[MySQL] Error updating password by phone:", e.message);
+    return { success: false };
   }
 }
 
 export async function mysqlVerifyUser(
   username: string,
-  birthday: string,
-  primarySchool: string
+  phone: string
 ): Promise<boolean> {
   try {
     const [rows] = await pool.execute<any[]>(
-      "SELECT id FROM users WHERE username = ? AND birthday = ? AND primary_school = ?",
-      [username, birthday, primarySchool]
+      "SELECT id FROM users WHERE username = ? AND phone = ?",
+      [username, phone]
     );
     return rows.length > 0;
   } catch (e: any) {
-    console.error("[MySQL] Error verifying user:", e.message);
+    console.error("[MySQL] Error verifying user by username and phone:", e.message);
+    return false;
+  }
+}
+
+export async function mysqlVerifyUserByPhone(
+  phone: string
+): Promise<boolean> {
+  try {
+    const [rows] = await pool.execute<any[]>(
+      "SELECT id FROM users WHERE phone = ?",
+      [phone]
+    );
+    return rows.length > 0;
+  } catch (e: any) {
+    console.error("[MySQL] Error verifying user by phone:", e.message);
     return false;
   }
 }

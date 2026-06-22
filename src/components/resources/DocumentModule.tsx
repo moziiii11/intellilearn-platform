@@ -1,6 +1,8 @@
 import { useState, useRef, MouseEvent } from "react";
 import { Bookmark, Edit3, X, Book, Trash2, Check } from "lucide-react";
 import { useUser } from "../../UserContext";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 export function DocumentModule() {
   const { userProfile } = useUser();
@@ -166,42 +168,19 @@ export function DocumentModule() {
       setNoteText("");
     };
 
-    const scrollToHighlight = (hlId: string) => {
-      const el = document.getElementById(`mark-${hlId}`);
-      if (el && scrollRef.current) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        el.classList.add('ring-2', 'ring-blue-500', 'transition-all', 'duration-500');
-        setTimeout(() => {
-          el.classList.remove('ring-2', 'ring-blue-500');
-        }, 1500);
-      }
+    const scrollToHighlight = (hl: typeof highlights[0]) => {
+      setViewingNote(hl);
+      setModalEditMode(false);
     };
 
-    const colorMap: Record<string, string> = {
-      "bg-yellow-200": "#fef08a",
-      "bg-emerald-200": "#a7f3d0",
-      "bg-blue-200": "#bfdbfe",
-      "bg-pink-200": "#fbcfe8"
-    };
-
-    const renderContent = (content: string) => {
-      let res = content;
-      const sortedDesc = [...highlights].sort((a, b) => b.start - a.start);
-
-      sortedDesc.forEach(hl => {
-        const before = res.substring(0, hl.start);
-        const text = res.substring(hl.start, hl.end);
-        const after = res.substring(hl.end);
-
-        const bg = colorMap[hl.color] || "#fef08a";
-        const noteAttr = hl.note ? hl.note.replace(/"/g, '&quot;') : '高亮';
-
-        const mark = `<mark id="mark-${hl.id}" class="${hl.color} rounded px-1 group relative cursor-pointer outline-none" style="background-color: ${bg}; color: inherit;" title="${noteAttr}">${text}</mark>`;
-
-        res = before + mark + after;
-      });
-
-      return <div dangerouslySetInnerHTML={{ __html: res }} className="whitespace-pre-wrap font-sans" />;
+    const renderContent = () => {
+      return (
+        <div className="markdown-body text-[15px] text-slate-800">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {activeDoc.content}
+          </ReactMarkdown>
+        </div>
+      );
     };
 
     if (activeDoc) {
@@ -223,7 +202,7 @@ export function DocumentModule() {
               onMouseUp={handleMouseUp}
               onScroll={handleScroll}
             >
-              {renderContent(activeDoc.content)}
+              {renderContent()}
 
               {selection && !pendingHighlight && (
                 <div
@@ -304,9 +283,7 @@ export function DocumentModule() {
                   <div
                     key={hl.id}
                     onClick={() => {
-                      scrollToHighlight(hl.id);
-                      setViewingNote(hl);
-                      setModalEditMode(false);
+                      scrollToHighlight(hl);
                     }}
                     className="p-3 bg-white border border-slate-200 rounded-xl shadow-sm hover:border-blue-300 transition-colors cursor-pointer group flex flex-col relative"
                   >

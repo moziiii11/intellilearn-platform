@@ -127,8 +127,11 @@ export default function Layout() {
         <div className="flex h-16 items-center px-6 max-w-screen-2xl mx-auto w-full">
           {/* Logo / Title */}
           <div className="flex items-center gap-2 mr-8">
+            <div className="bg-gradient-to-br from-blue-500 to-indigo-600 p-1.5 rounded-lg shadow-sm">
+              <BookOpen className="w-4 h-4 text-white" />
+            </div>
             <span className="text-xl font-bold text-slate-800">
-              平台标题
+              智慧优学
             </span>
           </div>
 

@@ -14,6 +14,8 @@ import {
   X
 } from "lucide-react";
 import { useUser } from "../../UserContext";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 type Question = {
   id: string;
@@ -403,11 +405,12 @@ export function ExerciseModule() {
                 <BookOpen className="w-5 h-5 text-blue-500"/>
                 答案与解析
               </h4>
-              <p className="text-slate-600 leading-relaxed text-[15px]">
+              <div className="text-slate-600 leading-relaxed text-[15px]">
                 正确答案是 <span className="font-bold text-emerald-600 px-1 bg-emerald-100/50 rounded">{String.fromCharCode(65 + q.answer)}</span>。
-                <br/>
-                <span className="block mt-2">{q.analysis}</span>
-              </p>
+                <div className="markdown-body text-[14px] mt-2">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{q.analysis}</ReactMarkdown>
+                </div>
+              </div>
             </div>
           )}
 
@@ -764,9 +767,9 @@ export function ExerciseModule() {
                     <h4 className="font-bold text-slate-800 mb-3 flex items-center gap-2">
                       <BookOpen className="w-5 h-5 text-blue-500"/> 易错解析
                     </h4>
-                    <p className="text-slate-600 leading-relaxed text-[15px]">
-                      {fullscreenWrongQ.q.analysis}
-                    </p>
+                    <div className="markdown-body text-[14px] text-slate-700">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{fullscreenWrongQ.q.analysis}</ReactMarkdown>
+                    </div>
                  </div>
               </div>
               <div className="p-4 sm:p-6 border-t border-slate-100 flex justify-end gap-3 bg-slate-50/50 shrink-0">

@@ -4,6 +4,8 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { cn } from "../lib/utils";
 import { useUser } from "../UserContext";
 import ReactECharts from "echarts-for-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 export default function Profile() {
   const { userName, setUserName, userAvatar, setUserAvatar, favorites, setFavorites, folders, setFolders, userProfile } = useUser();
@@ -336,21 +338,32 @@ export default function Profile() {
             
             {/* Top row: Analysis Text */}
             <div className="bg-gradient-to-br from-blue-50/50 to-indigo-50/50 rounded-2xl p-5 border border-blue-100/50 flex flex-col gap-4 shrink-0">
-               <p className="text-[14px] text-slate-700 leading-relaxed font-medium">
-                 <span className="font-bold text-slate-900 flex items-center gap-1.5 mb-1.5"><span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span> 学科数据洞察</span>
-                 {userProfile?.knowledgeBaseText || `近一周你在平台总计沉浸 ${avgThisWeek} 小时，整体状态极佳。你的知识基础评分达到 ${abilityScores.knowledgeBase} 分。`}
-                 {userProfile?.currentProgress ? ` 当前进度：${userProfile.currentProgress}` : ''}
-               </p>
+               <div className="text-[14px] text-slate-700 leading-relaxed font-medium">
+                 <div className="font-bold text-slate-900 flex items-center gap-1.5 mb-1.5"><span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span> 学科数据洞察</div>
+                 <div className="markdown-body text-[14px]">
+                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                     {userProfile?.knowledgeBaseText || `近一周你在平台总计沉浸 ${avgThisWeek} 小时，整体状态极佳。你的知识基础评分达到 ${abilityScores.knowledgeBase} 分。${userProfile?.currentProgress ? ` 当前进度：${userProfile.currentProgress}` : ''}`}
+                   </ReactMarkdown>
+                 </div>
+               </div>
                <div className="h-px bg-slate-200/50 w-full" />
-               <p className="text-[14px] text-slate-700 leading-relaxed font-medium">
-                 <span className="font-bold text-slate-900 flex items-center gap-1.5 mb-1.5"><span className="w-1.5 h-1.5 rounded-full bg-rose-400"></span> 核心提升建议</span>
-                 {userProfile?.errorProneAreasText || `根据薄弱点靶向追踪，你的易错点评分 ${abilityScores.errorProneAreas}。建议下阶段通过“疑问模块”针对性攻克薄弱环节，理清知识脉络。`}
-               </p>
+               <div className="text-[14px] text-slate-700 leading-relaxed font-medium">
+                 <div className="font-bold text-slate-900 flex items-center gap-1.5 mb-1.5"><span className="w-1.5 h-1.5 rounded-full bg-rose-400"></span> 核心提升建议</div>
+                 <div className="markdown-body text-[14px]">
+                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                     {userProfile?.errorProneAreasText || `根据薄弱点靶向追踪，你的易错点评分 ${abilityScores.errorProneAreas}。建议下阶段通过"疑问模块"针对性攻克薄弱环节，理清知识脉络。`}
+                   </ReactMarkdown>
+                 </div>
+               </div>
                <div className="h-px bg-slate-200/50 w-full" />
-               <p className="text-[14px] text-slate-700 leading-relaxed font-medium">
-                  <span className="font-bold text-slate-900 flex items-center gap-1.5 mb-1.5"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> 下阶段目标预测</span>
-                  {userProfile?.learningGoalsText || `按照当前调整策略，结合你的学习目标（${abilityScores.learningGoals} 分），模型预测你在下阶段能够成功攻克难点。继续保持专注！`}
-               </p>
+               <div className="text-[14px] text-slate-700 leading-relaxed font-medium">
+                  <div className="font-bold text-slate-900 flex items-center gap-1.5 mb-1.5"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> 下阶段目标预测</div>
+                  <div className="markdown-body text-[14px]">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {userProfile?.learningGoalsText || `按照当前调整策略，结合你的学习目标（${abilityScores.learningGoals} 分），模型预测你在下阶段能够成功攻克难点。继续保持专注！`}
+                    </ReactMarkdown>
+                  </div>
+               </div>
             </div>
 
             {/* Bottom row: Charts */}

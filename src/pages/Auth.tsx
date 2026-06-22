@@ -1,23 +1,24 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useUser } from '../UserContext';
-import { Bot, Lock, User as UserIcon, ArrowRight, Eye, EyeOff, Calendar, School, AlertCircle } from 'lucide-react';
+import { Bot, Lock, User as UserIcon, ArrowRight, Eye, EyeOff, Smartphone, AlertCircle, CheckCircle2 } from 'lucide-react';
 
 export default function Auth() {
   const [isLogin, setIsLogin] = useState(true);
   const [isForgotPassword, setIsForgotPassword] = useState(false);
-  const [forgotStep, setForgotStep] = useState<1 | 2 | 3>(1);
-  
+  const [forgotStep, setForgotStep] = useState<1 | 2>(1);
+
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  
-  const [birthday, setBirthday] = useState('');
-  const [primarySchool, setPrimarySchool] = useState('');
-  
-  const [forgotName, setForgotName] = useState('');
+
+  const [forgotUsername, setForgotUsername] = useState('');
+  const [forgotPhone, setForgotPhone] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+
+  const [showSuccessToast, setShowSuccessToast] = useState(false);
 
   const { setIsLoggedIn, setUserName } = useUser();
   const navigate = useNavigate();
@@ -44,15 +45,11 @@ export default function Auth() {
       } else {
         const res = await fetch("/api/auth/register", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ username: name, password, birthday, primarySchool })
+          body: JSON.stringify({ username: name, password, phone })
         });
         const data = await res.json();
         if (data.success) {
-          alert('注册成功，请重新登录');
-          setIsLogin(true);
-          setPassword('');
-          setBirthday('');
-          setPrimarySchool('');
+          setShowSuccessToast(true);
         } else {
           setErrorMsg(data.message || '注册失败');
         }
@@ -65,38 +62,27 @@ export default function Auth() {
   const handleForgotStep1 = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
-    if (!forgotName) return;
-    setForgotStep(2); // Since we only verify at the end, just proceed
+    if (!forgotUsername || !forgotPhone) return;
+    setForgotStep(2);
   };
 
   const handleForgotStep2 = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
-    if (!birthday || !primarySchool) return;
-    setForgotStep(3); // Wait to check the backend
-  };
-
-  const handleForgotStep3 = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setErrorMsg('');
     try {
       const res = await fetch("/api/auth/reset-password", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: forgotName, birthday, primarySchool, newPassword })
+        body: JSON.stringify({ username: forgotUsername, phone: forgotPhone, newPassword })
       });
       const data = await res.json();
       if (data.success) {
         setIsForgotPassword(false);
         setIsLogin(true);
-        setName(forgotName);
         setPassword('');
-        setForgotName('');
-        setBirthday('');
-        setPrimarySchool('');
+        setForgotPhone('');
         setForgotStep(1);
       } else {
-        setErrorMsg(data.message || '密码重置失败，请检查密保答案');
-        setForgotStep(2); // kick back to step 2 if failed
+        setErrorMsg(data.message || '密码重置失败，验证信息错误');
       }
     } catch (e: any) {
       setErrorMsg('网络请求失败');
@@ -107,9 +93,9 @@ export default function Auth() {
     setErrorMsg('');
     setName('');
     setPassword('');
-    setBirthday('');
-    setPrimarySchool('');
-    setForgotName('');
+    setPhone('');
+    setForgotUsername('');
+    setForgotPhone('');
     setNewPassword('');
     setForgotStep(1);
     setShowPassword(false);
@@ -130,9 +116,8 @@ export default function Auth() {
               </div>
               <h1 className="text-[2rem] font-black text-slate-800 tracking-tight mt-5">找回密码</h1>
               <p className="text-slate-400 font-medium text-[13px] tracking-widest mt-2">
-                {forgotStep === 1 && '请输入您的用户名'}
-                {forgotStep === 2 && '请回答密保问题'}
-                {forgotStep === 3 && '请设置新密码'}
+                {forgotStep === 1 && '请输入您的用户名和手机号'}
+                {forgotStep === 2 && '请设置新密码'}
               </p>
             </div>
 
@@ -155,16 +140,32 @@ export default function Auth() {
                       <input
                         type="text"
                         required
-                        value={forgotName}
-                        onChange={(e) => setForgotName(e.target.value)}
+                        value={forgotUsername}
+                        onChange={(e) => setForgotUsername(e.target.value)}
                         className="w-full pl-11 pr-4 py-3.5 bg-slate-50/50 border border-slate-200 hover:border-slate-300 rounded-2xl focus:ring-4 focus:ring-blue-100 focus:border-blue-500 focus:bg-white outline-none transition-all placeholder:text-slate-400 text-[15px] font-medium text-slate-700"
-                        placeholder="请输入需要找回密码的用户名"
+                        placeholder="请输入用户名"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-2 ml-1">手机号</label>
+                    <div className="relative group">
+                      <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-blue-500/70 group-focus-within:text-blue-600 transition-colors">
+                        <Smartphone className="w-[1.125rem] h-[1.125rem]" />
+                      </div>
+                      <input
+                        type="tel"
+                        required
+                        value={forgotPhone}
+                        onChange={(e) => setForgotPhone(e.target.value)}
+                        className="w-full pl-11 pr-4 py-3.5 bg-slate-50/50 border border-slate-200 hover:border-slate-300 rounded-2xl focus:ring-4 focus:ring-blue-100 focus:border-blue-500 focus:bg-white outline-none transition-all placeholder:text-slate-400 text-[15px] font-medium text-slate-700"
+                        placeholder="请输入手机号"
                       />
                     </div>
                   </div>
                   <div className="pt-2">
                     <button type="submit" className="group w-full flex items-center justify-center gap-2 py-3.5 px-4 bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white rounded-2xl font-bold text-[15px] shadow-[0_4px_20px_0_rgba(59,130,246,0.3)] hover:shadow-[0_8px_25px_rgba(59,130,246,0.4)] hover:scale-[1.02] transition-all duration-300 outline-none focus:ring-4 focus:ring-blue-500/30">
-                      下一步
+                      下一步验证
                       <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform duration-300" />
                     </button>
                   </div>
@@ -173,49 +174,6 @@ export default function Auth() {
 
               {forgotStep === 2 && (
                 <form onSubmit={handleForgotStep2} className="space-y-6 relative z-10">
-                  <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2 ml-1">你的生日是什么时候？</label>
-                    <div className="relative group">
-                      <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-blue-500/70 group-focus-within:text-blue-600 transition-colors">
-                        <Calendar className="w-[1.125rem] h-[1.125rem]" />
-                      </div>
-                      <input
-                        type="text"
-                        required
-                        value={birthday}
-                        onChange={(e) => setBirthday(e.target.value)}
-                        className="w-full pl-11 pr-4 py-3.5 bg-slate-50/50 border border-slate-200 hover:border-slate-300 rounded-2xl focus:ring-4 focus:ring-blue-100 focus:border-blue-500 focus:bg-white outline-none transition-all placeholder:text-slate-400 text-[15px] font-medium text-slate-700"
-                        placeholder="请输入生日（格式：年-月-日）"
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2 ml-1">你的小学学校是什么？</label>
-                    <div className="relative group">
-                      <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-blue-500/70 group-focus-within:text-blue-600 transition-colors">
-                        <School className="w-[1.125rem] h-[1.125rem]" />
-                      </div>
-                      <input
-                        type="text"
-                        required
-                        value={primarySchool}
-                        onChange={(e) => setPrimarySchool(e.target.value)}
-                        className="w-full pl-11 pr-4 py-3.5 bg-slate-50/50 border border-slate-200 hover:border-slate-300 rounded-2xl focus:ring-4 focus:ring-blue-100 focus:border-blue-500 focus:bg-white outline-none transition-all placeholder:text-slate-400 text-[15px] font-medium text-slate-700"
-                        placeholder="请输入你的小学学校名称"
-                      />
-                    </div>
-                  </div>
-                  <div className="pt-2">
-                    <button type="submit" className="group w-full flex items-center justify-center gap-2 py-3.5 px-4 bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white rounded-2xl font-bold text-[15px] shadow-[0_4px_20px_0_rgba(59,130,246,0.3)] hover:shadow-[0_8px_25px_rgba(59,130,246,0.4)] hover:scale-[1.02] transition-all duration-300 outline-none focus:ring-4 focus:ring-blue-500/30">
-                      验证密保
-                      <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform duration-300" />
-                    </button>
-                  </div>
-                </form>
-              )}
-
-              {forgotStep === 3 && (
-                <form onSubmit={handleForgotStep3} className="space-y-6 relative z-10">
                   <div>
                     <label className="block text-sm font-bold text-slate-700 mb-2 ml-1">新密码</label>
                     <div className="relative group">
@@ -341,43 +299,24 @@ export default function Auth() {
                 </div>
               </div>
 
-              {/* Security Questions during Registration */}
+              {/* Phone Field during Registration */}
               {!isLogin && (
-                <>
-                  <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2 ml-1">你的生日是什么时候？</label>
-                    <div className="relative group">
-                      <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-blue-500/70 group-focus-within:text-blue-600 transition-colors">
-                        <Calendar className="w-[1.125rem] h-[1.125rem]" />
-                      </div>
-                      <input
-                        type="text"
-                        required
-                        value={birthday}
-                        onChange={(e) => setBirthday(e.target.value)}
-                        className="w-full pl-11 pr-4 py-3.5 bg-slate-50/50 border border-slate-200 hover:border-slate-300 rounded-2xl focus:ring-4 focus:ring-blue-100 focus:border-blue-500 focus:bg-white outline-none transition-all placeholder:text-slate-400 text-[15px] font-medium text-slate-700"
-                        placeholder="请输入生日（格式：年-月-日）"
-                      />
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2 ml-1">手机号</label>
+                  <div className="relative group">
+                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-blue-500/70 group-focus-within:text-blue-600 transition-colors">
+                      <Smartphone className="w-[1.125rem] h-[1.125rem]" />
                     </div>
+                    <input
+                      type="tel"
+                      required
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      className="w-full pl-11 pr-4 py-3.5 bg-slate-50/50 border border-slate-200 hover:border-slate-300 rounded-2xl focus:ring-4 focus:ring-blue-100 focus:border-blue-500 focus:bg-white outline-none transition-all placeholder:text-slate-400 text-[15px] font-medium text-slate-700"
+                      placeholder="请输入手机号"
+                    />
                   </div>
-                  
-                  <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2 ml-1">你的小学学校是什么？</label>
-                    <div className="relative group">
-                      <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-blue-500/70 group-focus-within:text-blue-600 transition-colors">
-                        <School className="w-[1.125rem] h-[1.125rem]" />
-                      </div>
-                      <input
-                        type="text"
-                        required
-                        value={primarySchool}
-                        onChange={(e) => setPrimarySchool(e.target.value)}
-                        className="w-full pl-11 pr-4 py-3.5 bg-slate-50/50 border border-slate-200 hover:border-slate-300 rounded-2xl focus:ring-4 focus:ring-blue-100 focus:border-blue-500 focus:bg-white outline-none transition-all placeholder:text-slate-400 text-[15px] font-medium text-slate-700"
-                        placeholder="请输入你的小学学校名称"
-                      />
-                    </div>
-                  </div>
-                </>
+                </div>
               )}
 
               <div className="pt-2">
@@ -419,6 +358,41 @@ export default function Auth() {
           </p>
         </div>
       </div>
+
+      {/* 注册成功提示弹窗 */}
+      {showSuccessToast && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm px-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl shadow-[0_20px_60px_rgba(0,0,0,0.12)] border border-slate-100 w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200">
+            {/* 顶部装饰条 */}
+            <div className="h-1.5 bg-gradient-to-r from-blue-400 via-blue-500 to-indigo-500"></div>
+            <div className="px-8 py-8 text-center">
+              {/* 成功图标 */}
+              <div className="mx-auto w-16 h-16 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-full flex items-center justify-center mb-5 ring-4 ring-blue-50/50">
+                <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center shadow-lg shadow-blue-500/25">
+                  <CheckCircle2 className="w-6 h-6 text-white" />
+                </div>
+              </div>
+              {/* 提示文字 */}
+              <h3 className="text-lg font-bold text-slate-800 mb-2">注册成功</h3>
+              <p className="text-slate-500 text-sm font-medium leading-relaxed">
+                请重新登录
+              </p>
+              {/* 按钮 */}
+              <button
+                onClick={() => {
+                  setShowSuccessToast(false);
+                  setIsLogin(true);
+                  setPassword('');
+                  setPhone('');
+                }}
+                className="mt-7 w-full py-3 px-4 bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white rounded-2xl font-bold text-[15px] shadow-[0_4px_20px_0_rgba(59,130,246,0.3)] hover:shadow-[0_8px_25px_rgba(59,130,246,0.4)] hover:scale-[1.02] transition-all duration-300 outline-none focus:ring-4 focus:ring-blue-500/30"
+              >
+                我知道了
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

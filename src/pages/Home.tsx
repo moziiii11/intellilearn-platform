@@ -21,6 +21,7 @@ import {
   Star,
   ArrowDown,
   X,
+  BookOpen,
 } from "lucide-react";
 import ReactECharts from "echarts-for-react";
 import { cn } from "../lib/utils";
@@ -643,17 +644,19 @@ export default function Home() {
 
         {/* Resource Generation Notification Toast */}
         {resourceToast && (
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-5 py-3 rounded-2xl shadow-xl flex items-center gap-3 animate-in fade-in slide-in-from-top-4 cursor-pointer"
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-white/85 backdrop-blur-xl border border-indigo-200/40 px-4 py-2.5 rounded-2xl shadow-lg shadow-indigo-200/25 ring-1 ring-indigo-100/30 flex items-center gap-2.5 animate-in fade-in slide-in-from-top-4 cursor-pointer transition-all duration-300 hover:shadow-xl hover:shadow-indigo-200/35"
             onClick={() => {
               setResourceToast(null);
               markNotificationsRead();
               window.location.href = "/resources";
             }}
           >
-            <span className="text-lg">📚</span>
-            <div className="flex flex-col">
-              <span className="text-sm font-bold">学习资源已更新</span>
-              <span className="text-xs text-blue-100">{resourceToast}</span>
+            <div className="bg-gradient-to-br from-blue-400 to-indigo-500 p-1.5 rounded-xl shadow-sm shrink-0">
+              <BookOpen className="w-3.5 h-3.5 text-white" />
+            </div>
+            <div className="flex flex-col min-w-0">
+              <span className="text-sm font-bold text-slate-800">学习资源已更新</span>
+              <span className="text-xs text-slate-500">{resourceToast}</span>
             </div>
             <button
               onClick={(e) => {
@@ -661,9 +664,9 @@ export default function Home() {
                 setResourceToast(null);
                 markNotificationsRead();
               }}
-              className="ml-2 p-1 hover:bg-white/20 rounded-lg transition-colors"
+              className="ml-1 p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors shrink-0"
             >
-              <X className="w-4 h-4" />
+              <X className="w-3.5 h-3.5" />
             </button>
           </div>
         )}
