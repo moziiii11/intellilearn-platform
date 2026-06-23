@@ -18,7 +18,7 @@ import {
   VolumeX,
   Bookmark,
   Edit2,
-  Star,
+  PenLine,
   ArrowDown,
   X,
   BookOpen,
@@ -28,6 +28,9 @@ import { cn } from "../lib/utils";
 import { useUser, Message } from "../UserContext";
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
@@ -58,7 +61,7 @@ export default function Home() {
   const [input, setInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
 
-  const abilityScores = userProfile?.abilityScores || { knowledgeBase: 0, cognitiveStyle: 0, errorProneAreas: 0, learningGoals: 0, majorOrInterests: 0, currentProgress: 0 };
+  const abilityScores = userProfile?.abilityScores || {};
   
   const radarOption = useMemo(() => ({
     tooltip: { trigger: "item" },
@@ -302,7 +305,7 @@ export default function Home() {
           {
             id: `msg-${newId}-start`,
             role: "assistant",
-            content: "这是一个新的空白对话，请问有什么可以帮您？",
+            content: "你好！我是智学助手 🎓\n\n有什么学习上的问题想和我聊聊吗？无论是具体的知识点、解题思路，还是学习规划方面的困惑，我都可以帮到你。",
           },
         ],
       },
@@ -488,7 +491,7 @@ export default function Home() {
         <div className="p-4 flex items-center justify-between border-b border-slate-100 shrink-0">
           {isSidebarOpen && (
             <div className="flex items-center gap-2 text-blue-600">
-              <Sparkles className="w-5 h-5" />
+              <PenLine className="w-5 h-5" />
               <span className="font-bold text-[15px]">历史记录</span>
             </div>
           )}
@@ -674,7 +677,7 @@ export default function Home() {
         <div className="px-6 py-4 border-b border-slate-100/60 shrink-0 flex items-center justify-between z-10">
           <div className="flex items-center gap-4">
             <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-2.5 rounded-2xl border border-blue-100/50 shadow-sm">
-              <Sparkles className="w-6 h-6 text-blue-600" />
+              <PenLine className="w-6 h-6 text-blue-600" />
             </div>
             <div className="flex flex-col gap-1">
               <h2 className="text-lg font-bold text-slate-800 tracking-tight">
@@ -698,7 +701,7 @@ export default function Home() {
                 <Bot className="w-8 h-8 text-blue-400" />
               </div>
               <p className="text-slate-500 font-medium tracking-wide">
-                发送一条消息来开始探索之旅…
+                点击左侧「新建对话」或发送消息开始与 AI 交流
               </p>
             </div>
           ) : (
@@ -763,7 +766,8 @@ export default function Home() {
                       ) : (
                         <div className="markdown-body text-[15px] text-slate-800">
                           <ReactMarkdown
-                            remarkPlugins={[remarkGfm]}
+                            remarkPlugins={[remarkGfm, remarkMath]}
+                            rehypePlugins={[rehypeKatex]}
                             components={{
                               code({node, inline, className, children, ...props}: any) {
                                 const match = /language-(\w+)/.exec(className || '');
@@ -982,6 +986,14 @@ export default function Home() {
             <User className="w-4 h-4 text-blue-500" /> 用户画像
           </h3>
           <div className="flex-1 rounded-2xl bg-white/60 border border-slate-100/80 p-5 flex flex-col justify-center shadow-sm">
+            {Object.keys(abilityScores).length === 0 ? (
+              <div className="flex flex-col items-center justify-center gap-2 py-4">
+                <Bot className="w-8 h-8 text-slate-300" />
+                <p className="text-[13px] text-slate-400 font-medium text-center">
+                  完成首次对话后<br />AI 将为你生成专属画像
+                </p>
+              </div>
+            ) : (
             <div className="flex flex-wrap justify-center gap-2.5">
               {abilityScores.knowledgeBase > 60 ? <span className="px-3.5 py-1.5 text-[13px] font-semibold rounded-xl bg-blue-50 text-blue-600 border border-blue-200/80 shadow-[0_1px_2px_rgba(0,0,0,0.02)] cursor-pointer hover:-translate-y-0.5 hover:shadow-md hover:bg-blue-100 hover:border-blue-300 transition-all duration-300">基础扎实</span> : <span className="px-3.5 py-1.5 text-[13px] font-semibold rounded-xl bg-rose-50 text-rose-600 border border-rose-200/80 shadow-[0_1px_2px_rgba(0,0,0,0.02)] cursor-pointer hover:-translate-y-0.5 hover:shadow-md hover:bg-rose-100 hover:border-rose-300 transition-all duration-300">基础薄弱</span>}
               {abilityScores.learningGoals > 70 ? <span className="px-3.5 py-1.5 text-[13px] font-semibold rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-200/80 shadow-[0_1px_2px_rgba(0,0,0,0.02)] cursor-pointer hover:-translate-y-0.5 hover:shadow-md hover:bg-emerald-100 hover:border-emerald-300 transition-all duration-300">目标清晰</span> : null}
@@ -993,6 +1005,7 @@ export default function Home() {
                 {userProfile?.majorOrInterests ? userProfile.majorOrInterests.substring(0, 10) : "逻辑思维强"}
               </span>
             </div>
+            )}
           </div>
         </div>
 
@@ -1000,7 +1013,7 @@ export default function Home() {
         <div className="bg-white/70 backdrop-blur-md rounded-3xl shadow-sm border border-slate-200/60 flex flex-col p-6 h-[340px] w-full shrink-0">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-semibold text-slate-800 tracking-tight flex items-center gap-2">
-              <Star className="w-4 h-4 text-indigo-500" />
+              <PenLine className="w-4 h-4 text-indigo-500" />
               {chartTab === "radar"
                 ? "能力分析"
                 : chartTab === "trend"

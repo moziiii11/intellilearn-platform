@@ -6,6 +6,9 @@ import { useUser } from "../UserContext";
 import ReactECharts from "echarts-for-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 
 export default function Profile() {
   const { userName, setUserName, userAvatar, setUserAvatar, favorites, setFavorites, folders, setFolders, userProfile } = useUser();
@@ -29,7 +32,7 @@ export default function Profile() {
 
   const heatmapData = userProfile?.calendar?.data || [];
   const trendData = userProfile?.trendData || [];
-  const abilityScores = userProfile?.abilityScores || { knowledgeBase: 0, cognitiveStyle: 0, errorProneAreas: 0, learningGoals: 0, majorOrInterests: 0, currentProgress: 0 };
+  const abilityScores = userProfile?.abilityScores || {};
   const totalActive = userProfile?.calendar?.totalActive || 0;
   const maxStreak = userProfile?.calendar?.maxStreak || 0;
   const thisWeekData = heatmapData.slice(-7);
@@ -237,11 +240,19 @@ export default function Profile() {
           <div className="flex flex-col items-center gap-1.5 w-full text-center px-2">
             <div className="text-2xl font-bold text-slate-800 tracking-tight xl:max-w-[280px] break-words">{userName}</div>
             <div className="flex flex-wrap justify-center gap-2 mt-2 px-2">
+              {Object.keys(abilityScores).length === 0 ? (
+                <span className="px-3 py-1 text-[13px] font-semibold rounded-xl bg-slate-50 text-slate-500 border border-slate-200 shadow-sm">
+                  完成首次对话后生成画像
+                </span>
+              ) : (
+                <>
               {abilityScores.knowledgeBase > 60 ? <span className="px-3 py-1 text-[13px] font-semibold rounded-xl bg-blue-50 text-blue-600 border border-blue-200/80 shadow-sm">基础扎实</span> : <span className="px-3 py-1 text-[13px] font-semibold rounded-xl bg-rose-50 text-rose-600 border border-rose-200/80 shadow-sm">基础薄弱</span>}
               {abilityScores.learningGoals > 70 ? <span className="px-3 py-1 text-[13px] font-semibold rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-200/80 shadow-sm">目标清晰</span> : null}
               {abilityScores.errorProneAreas < 60 ? <span className="px-3 py-1 text-[13px] font-semibold rounded-xl bg-slate-50 text-slate-600 border border-slate-200 shadow-sm">计算易错</span> : null}
               {userProfile?.cognitiveStyle ? <span className="px-3 py-1 text-[13px] font-semibold rounded-xl bg-sky-50 text-sky-600 border border-sky-200/80 shadow-sm">偏好：{userProfile.cognitiveStyle.substring(0, 10)}</span> : <span className="px-3 py-1 text-[13px] font-semibold rounded-xl bg-sky-50 text-sky-600 border border-sky-200/80 shadow-sm">视觉型学习者</span>}
               {userProfile?.majorOrInterests ? <span className="px-3 py-1 text-[13px] font-semibold rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-200/80 shadow-sm">{userProfile.majorOrInterests.substring(0, 10)}</span> : <span className="px-3 py-1 text-[13px] font-semibold rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-200/80 shadow-sm">探索中</span>}
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -341,8 +352,8 @@ export default function Profile() {
                <div className="text-[14px] text-slate-700 leading-relaxed font-medium">
                  <div className="font-bold text-slate-900 flex items-center gap-1.5 mb-1.5"><span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span> 学科数据洞察</div>
                  <div className="markdown-body text-[14px]">
-                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                     {userProfile?.knowledgeBaseText || `近一周你在平台总计沉浸 ${avgThisWeek} 小时，整体状态极佳。你的知识基础评分达到 ${abilityScores.knowledgeBase} 分。${userProfile?.currentProgress ? ` 当前进度：${userProfile.currentProgress}` : ''}`}
+                   <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
+                     {userProfile?.knowledgeBaseText || `近一周你在平台总计沉浸 ${avgThisWeek} 小时，整体状态极佳。${userProfile?.currentProgress ? ` 当前进度：${userProfile.currentProgress}` : ''}`}
                    </ReactMarkdown>
                  </div>
                </div>
@@ -350,8 +361,8 @@ export default function Profile() {
                <div className="text-[14px] text-slate-700 leading-relaxed font-medium">
                  <div className="font-bold text-slate-900 flex items-center gap-1.5 mb-1.5"><span className="w-1.5 h-1.5 rounded-full bg-rose-400"></span> 核心提升建议</div>
                  <div className="markdown-body text-[14px]">
-                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                     {userProfile?.errorProneAreasText || `根据薄弱点靶向追踪，你的易错点评分 ${abilityScores.errorProneAreas}。建议下阶段通过"疑问模块"针对性攻克薄弱环节，理清知识脉络。`}
+                   <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
+                     {userProfile?.errorProneAreasText || `根据薄弱点靶向追踪，建议下阶段通过"疑问模块"针对性攻克薄弱环节，理清知识脉络。`}
                    </ReactMarkdown>
                  </div>
                </div>
@@ -359,8 +370,8 @@ export default function Profile() {
                <div className="text-[14px] text-slate-700 leading-relaxed font-medium">
                   <div className="font-bold text-slate-900 flex items-center gap-1.5 mb-1.5"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> 下阶段目标预测</div>
                   <div className="markdown-body text-[14px]">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {userProfile?.learningGoalsText || `按照当前调整策略，结合你的学习目标（${abilityScores.learningGoals} 分），模型预测你在下阶段能够成功攻克难点。继续保持专注！`}
+                    <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
+                      {userProfile?.learningGoalsText || `按照当前调整策略，模型预测你在下阶段能够成功攻克难点。继续保持专注！`}
                     </ReactMarkdown>
                   </div>
                </div>

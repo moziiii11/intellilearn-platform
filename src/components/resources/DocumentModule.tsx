@@ -3,6 +3,9 @@ import { Bookmark, Edit3, X, Book, Trash2, Check } from "lucide-react";
 import { useUser } from "../../UserContext";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 
 export function DocumentModule() {
   const { userProfile } = useUser();
@@ -176,7 +179,7 @@ export function DocumentModule() {
     const renderContent = () => {
       return (
         <div className="markdown-body text-[15px] text-slate-800">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+          <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
             {activeDoc.content}
           </ReactMarkdown>
         </div>

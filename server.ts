@@ -41,10 +41,31 @@ function writeDB(data: any) {
   fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
 }
 
+function hasUserEngaged(username: string, db: any): boolean {
+  const user = db.users[username];
+  if (!user) return false;
+  const hasConversations = user.conversationHistory && user.conversationHistory.length > 0;
+  const hasBehavioralEvents = user.behavioralEvents && user.behavioralEvents.length > 0;
+  const hasChats = user.chats && user.chats.length > 0;
+  const hasProfileFromLLM = user.profile && user.profile.lastUpdated;
+  return hasConversations || hasBehavioralEvents || hasChats || hasProfileFromLLM;
+}
+
 function getUserProfile(username: string) {
   const db = readDB();
   if (!db.users[username]) return null;
   const profile = db.users[username].profile || {};
+
+  // For brand-new users with no engagement, return minimal profile (no fake scores)
+  if (!hasUserEngaged(username, db)) {
+    return {
+      name: username,
+      calendar: { totalActive: 0, maxStreak: 0, data: [] },
+      trendData: [],
+      abilityScores: {},
+    };
+  }
+
   // Override with real data computed from behavioral events
   const realCalendar = buildCalendarFromBehavioralEvents(username, db);
   const realTrend = buildTrendFromBehavioralEvents(username, db);
@@ -579,6 +600,11 @@ function buildTrendFromBehavioralEvents(username: string, db: any) {
 // ============= Build Real Subject Mastery Scores from Behavioral Events =============
 function buildSubjectScoresFromBehavioralEvents(username: string, db: any, existingProfile: any) {
   const events: any[] = db.users[username]?.behavioralEvents || [];
+
+  // If no behavioral events exist, return empty — don't fabricate default scores
+  if (events.length === 0) {
+    return {};
+  }
 
   // 1. knowledgeBase → exercise correct rate
   const exerciseEvents = events.filter((e: any) => e.eventType === 'exercise_answer');
@@ -1485,10 +1511,19 @@ async function startServer() {
       const promptMap: Record<string, string> = { explanation: EXPLANATION_AGENT_PROMPT, mindmap: MINDMAP_AGENT_PROMPT, quiz: QUIZ_AGENT_PROMPT, "video-code": VIDEO_CODE_AGENT_PROMPT, reading: READING_AGENT_PROMPT };
       const systemInstruction = (promptMap[type] || EXPLANATION_AGENT_PROMPT) + `\n\n学生画像: ${JSON.stringify(userProfile || {})}`;
 
+      // Optimize max_tokens per type for faster generation
+      const tokenMap: Record<string, number> = {
+        mindmap: 2048,       // JSON tree structure — small
+        quiz: 4096,          // 8 quiz questions — medium
+        "video-code": 6144,  // Code examples — medium-large
+        explanation: 8192,   // Detailed explanation — large
+        reading: 8192,       // Reading material — large
+      };
+
       const response = await agentConfigs.resource.client.chat.completions.create({
         model: agentConfigs.resource.model,
         temperature: 0.5,
-        max_tokens: 16384,
+        max_tokens: tokenMap[type] || 4096,
         messages: [{ role: "system", content: systemInstruction }, { role: "user", content: `知识点: ${sanitizeUserContent(topic)}` }],
       });
 
@@ -1685,19 +1720,21 @@ async function startServer() {
   app.post("/api/extended-links", authMiddleware, async (req, res) => {
     try {
       const username = (req as any).username;
-      const { topic } = req.body;
+      const { topic, linkType } = req.body;
       if (!topic || typeof topic !== "string") {
         return res.status(400).json({ error: "topic required" });
       }
+      // linkType: "exercise" (题库, default) or "reading" (阅读链接)
+      const resourceType = linkType === "reading" ? "reading" : "exercise";
 
-      // Check cache (1 hour TTL)
-      const cacheKey = `${username}:${topic}`;
+      // Check cache (1 hour TTL) — separate caches for exercise vs reading
+      const cacheKey = `${username}:${resourceType}:${topic}`;
       const cached = extendedLinksCache.get(cacheKey);
       if (cached && Date.now() - cached.timestamp < 3600000) {
         return res.json(cached.data);
       }
 
-      logUserAction(username, "extended_links", `搜索公开资源: ${topic}`);
+      logUserAction(username, "extended_links", `搜索公开资源(${resourceType}): ${topic}`);
 
       // Get user profile for personalization
       const db3 = readDB();
@@ -1705,9 +1742,10 @@ async function startServer() {
         || db3.users[username]?.profile?.educationLevel
         || "未指定";
 
-      const prompt = `你是一个学习资源推荐专家。学生水平：${userLevel}，学习主题：${topic}。
+      const isReading = resourceType === "reading";
+      const prompt = isReading ? `你是一个学习资源推荐专家。学生水平：${userLevel}，学习主题：${topic}。
 
-请推荐5个适合${userLevel}学生的高质量公开学习资源。
+请推荐5个适合${userLevel}学生的高质量公开阅读资源（技术文章、教材章节、博客深度解析、论文综述等）。
 
 ## 输出要求
 纯JSON，不要包裹：
@@ -1715,22 +1753,49 @@ async function startServer() {
 {
   "links": [
     {
-      "title": "<资源标题，具体明确>",
-      "platform": "<Bilibili / 中国大学MOOC / 网易云课堂>",
+      "title": "<文章/教材名称，具体明确>",
+      "platform": "<知乎专栏 / CSDN / 掘金 / 思否 / 中国大学MOOC课件 / 豆瓣图书 / 知网>",
       "searchQuery": "<在平台上能搜到该资源的精确中文关键词>",
-      "description": "<1句话描述内容和为什么适合${userLevel}学生>",
+      "description": "<1句话描述该阅读材料的内容和为什么适合${userLevel}学生>",
       "level": "初级 / 中级 / 高级",
-      "duration": "<估计时长>"
+      "duration": "<估计阅读时长，如：15分钟 / 1小时>"
     }
   ]
 }
 
 ## 规则
 1. 只输出纯JSON
-2. 推荐的难度必须匹配${userLevel}水平：如果是初高中，不要推荐大学课程；如果是大学，不要推荐小学内容
-3. 优先中文平台
+2. 推荐的难度必须匹配${userLevel}水平
+3. 优先中文平台，推荐真实可搜索到的优质文章
 4. 不要编造URL
-5. 必须与${topic}直接相关`;
+5. 必须与${topic}直接相关
+6. 推荐深度阅读材料（文章/教材），不要推荐视频` : `你是一个学习资源推荐专家。学生水平：${userLevel}，学习主题：${topic}。
+
+请推荐5个适合${userLevel}学生的高质量公开练习资源（题库、刷题平台、习题集、竞赛题等）。
+
+## 输出要求
+纯JSON，不要包裹：
+
+{
+  "links": [
+    {
+      "title": "<题库/习题集名称，具体明确>",
+      "platform": "<LeetCode / 牛客网 / 洛谷 / AcWing / 中国大学MOOC习题 / 学堂在线 / 教材配套习题>",
+      "searchQuery": "<在平台上能搜到该资源的精确中文关键词>",
+      "description": "<1句话描述该题库的题型和为什么适合${userLevel}学生练习>",
+      "level": "初级 / 中级 / 高级",
+      "questionCount": "<估计题目数量，如：200+题 / 50套卷>"
+    }
+  ]
+}
+
+## 规则
+1. 只输出纯JSON
+2. 推荐的难度必须匹配${userLevel}水平
+3. 优先中文平台和国内常用题库平台
+4. 不要编造URL
+5. 必须与${topic}直接相关，是真实存在或可搜索到的题库资源
+6. 不要推荐视频课程或教程，只推荐练习题目资源`;
 
       const response = await agentConfigs.resource.client.chat.completions.create({
         model: agentConfigs.resource.model,

@@ -44,10 +44,11 @@ export function UserProvider({ children }: { children: ReactNode }) {
   const [userProfile, setUserProfile] = useState<any>(null);
   const [chapterProgress, setChapterProgress] = useState<any>({ chapters: [] });
   const [notifications, setNotifications] = useState<any[]>([]);
+  // Track which user's data is currently loaded to prevent cross-account leakage
+  const [currentUser, setCurrentUser] = useState<string>(() => localStorage.getItem('currentUser') || '');
 
   const getToken = () => {
     const rawToken = localStorage.getItem('token') || '';
-    // If the token contains non-ASCII characters directly, encode it to prevent network errors
     try {
       if (rawToken && rawToken.startsWith('token_')) {
         const username = rawToken.replace('token_', '');
@@ -57,6 +58,18 @@ export function UserProvider({ children }: { children: ReactNode }) {
     return encodeURIComponent(rawToken);
   };
   const authHeaders = { Authorization: `Bearer ${getToken()}` };
+
+  // ============= Clear all user state (prevents cross-account data leakage) =============
+  const clearAllState = () => {
+    setChats([]);
+    setActiveChatId(1);
+    setFavorites([]);
+    setFolders(['全部收藏', '默认分类']);
+    setUserProfile(null);
+    setChapterProgress({ chapters: [] });
+    setNotifications([]);
+    setUserAvatar(null);
+  };
 
   const fetchProfile = async () => {
     if (!isLoggedIn) return;
@@ -79,8 +92,22 @@ export function UserProvider({ children }: { children: ReactNode }) {
           setChats(data);
           setActiveChatId(data[0].id);
         } else {
-          setChats([]);
-          setActiveChatId(1);
+          // First-time user: create a proactive welcome chat
+          const welcomeChat: Chat = {
+            id: Date.now(),
+            title: "欢迎来到智慧优学",
+            messages: [
+              {
+                id: `msg-welcome-${Date.now()}`,
+                role: "assistant",
+                content: "你好！我是智学助手 🎓\n\n在开始学习之前，我想先了解一下你的情况，这样才能为你定制专属的学习计划。\n\n**请告诉我：**\n- 你目前的学习阶段？（初中 / 高中 / 大学 / 在职学习）\n- 你想重点提升哪个学科或技能？\n- 你在学习中遇到的最大困难是什么？\n\n不用紧张，就像和朋友聊天一样，说说你的想法吧~",
+              },
+            ],
+          };
+          setChats([welcomeChat]);
+          setActiveChatId(welcomeChat.id);
+          // Save the welcome chat to server
+          saveChatsToServer([welcomeChat]);
         }
       }
     } catch(e) {}
@@ -98,32 +125,78 @@ export function UserProvider({ children }: { children: ReactNode }) {
     } catch(e) {}
   };
 
+  // ============= State lifecycle: clear on logout, fetch on login =============
   useEffect(() => {
+    const storedUser = localStorage.getItem('currentUser') || '';
     if (isLoggedIn) {
+      // Check if a DIFFERENT user logged in — clear old data first to prevent leakage
+      if (storedUser && currentUser && storedUser !== currentUser) {
+        clearAllState();
+      }
+      setCurrentUser(storedUser);
+      // Always fetch fresh data for the logged-in user
       fetchChats();
       fetchFavorites();
       fetchProfile();
+    } else {
+      // User logged out — clear all state immediately
+      clearAllState();
+      setCurrentUser('');
     }
   }, [isLoggedIn]);
 
-  // Synchronize state when it changes
-  useEffect(() => {
-    if (isLoggedIn && chats.length > 0) {
-      fetch("/api/chats", { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders }, body: JSON.stringify(chats) }).catch(() => {});
-    }
-  }, [chats, isLoggedIn]);
+  // ============= Explicit save functions (replacing auto-sync effects) =============
+  // Only save when explicitly called, preventing accidental cross-account data writes
+  const saveChatsToServer = async (newChats: Chat[]) => {
+    if (!isLoggedIn) return;
+    try {
+      await fetch("/api/chats", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders },
+        body: JSON.stringify(newChats),
+      });
+    } catch(e) {}
+  };
 
-  useEffect(() => {
-    if (isLoggedIn) {
-      fetch("/api/favorites", { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders }, body: JSON.stringify({ favorites, folders }) }).catch(() => {});
-    }
-  }, [favorites, folders, isLoggedIn]);
+  const saveFavoritesToServer = async (newFavorites: Favorite[], newFolders: string[]) => {
+    if (!isLoggedIn) return;
+    try {
+      await fetch("/api/favorites", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders },
+        body: JSON.stringify({ favorites: newFavorites, folders: newFolders }),
+      });
+    } catch(e) {}
+  };
 
+  const saveProfileToServer = async (profile: any) => {
+    if (!isLoggedIn || !profile) return;
+    try {
+      await fetch("/api/user-profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders },
+        body: JSON.stringify(profile),
+      });
+    } catch(e) {}
+  };
+
+  // Auto-save chats on change (debounced, only when logged in and user matches)
   useEffect(() => {
-    if (isLoggedIn && userProfile) {
-      fetch("/api/user-profile", { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders }, body: JSON.stringify(userProfile) }).catch(() => {});
-    }
-  }, [userProfile, isLoggedIn]);
+    if (!isLoggedIn || chats.length === 0) return;
+    const storedUser = localStorage.getItem('currentUser') || '';
+    if (storedUser !== currentUser) return; // Safety: don't save if user mismatch
+    const timer = setTimeout(() => saveChatsToServer(chats), 500);
+    return () => clearTimeout(timer);
+  }, [chats]);
+
+  // Auto-save favorites on change
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    const storedUser = localStorage.getItem('currentUser') || '';
+    if (storedUser !== currentUser) return;
+    const timer = setTimeout(() => saveFavoritesToServer(favorites, folders), 500);
+    return () => clearTimeout(timer);
+  }, [favorites, folders]);
 
   // ============= Learning Event Emitter (buffered, debounced) =============
   const eventBufferRef = useRef<{ eventType: string; payload: Record<string, any> }[]>([]);
