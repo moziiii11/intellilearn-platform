@@ -1,0 +1,28 @@
+import tailwindcss from '@tailwindcss/vite';
+import react from '@vitejs/plugin-react';
+import path from 'path';
+import {defineConfig} from 'vite';
+
+export default defineConfig(() => {
+  return {
+    plugins: [react(), tailwindcss()],
+    resolve: {
+      alias: {
+        '@': path.resolve(__dirname, '.'),
+      },
+    },
+    server: {
+      hmr: process.env.DISABLE_HMR !== 'true',
+      watch: process.env.DISABLE_HMR === 'true' ? null : {
+        ignored: [
+          '**/db.json',
+          '**/db.backup.json',
+          '**/db.json.tmp.*',
+          '**/db.corrupted.*.json',
+          '**/node_modules/**',
+          '**/.git/**',
+        ],
+      },
+    },
+  };
+});
