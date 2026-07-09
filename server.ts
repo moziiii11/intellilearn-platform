@@ -448,10 +448,10 @@ function autoCheckChapterCompletion(username: string, db: any) {
     saveChapterProgress(username, progress);
 
     // Auto-unlock next learning path phase when current phase chapters are all done
+    const currentPhase = (db.users[username]?.profile?.learningPath || []).find((p: any) => p.status === "current");
     const phaseChapters = progress.chapters.filter(
       (c: any) => c.phaseTitle === currentPhase?.title && c.status !== "completed"
     );
-    const currentPhase = (db.users[username]?.profile?.learningPath || []).find((p: any) => p.status === "current");
     if (currentPhase && phaseChapters.length === 0) {
       atomicDBUpdate((freshDb) => {
         const lp = freshDb.users[username]?.profile?.learningPath;
@@ -1425,7 +1425,16 @@ async function startServer() {
       username = raw.startsWith("token_") ? raw.slice(6) : raw;
     }
     if (!username) return res.status(401).json({ error: "Unauthorized" });
-    try { username = decodeURIComponent(username); } catch(e) {}
+    // 循环解码，处理 URL 双重编码
+    try {
+      let prev = username;
+      for (let i = 0; i < 3; i++) {
+        const decoded = decodeURIComponent(prev);
+        if (decoded === prev) break;
+        prev = decoded;
+      }
+      username = prev;
+    } catch(e) {}
     const db = readDB();
     if (!db.users[username]) {
       // Auto-recreate user if database was wiped by container restart
@@ -1491,7 +1500,7 @@ async function startServer() {
       switch (type) {
         case "events": {
           const [rows] = await pool.query<any[]>(
-            "SELECT le.username, le.event_type, le.payload, le.created_at FROM learning_events le ORDER BY le.created_at DESC LIMIT 200"
+            "SELECT le.username, le.event_type, le.payload, le.created_at FROM learning_events le WHERE DATE(DATE_ADD(le.created_at, INTERVAL 8 HOUR)) = CURDATE() ORDER BY le.created_at DESC LIMIT 200"
           );
           data = rows;
           break;
@@ -1623,7 +1632,8 @@ async function startServer() {
           db.users[username] = { password, phone: user.phone, role: user.role };
           writeDB(db);
         }
-        return res.json({ success: true, token: "token_" + username, username, role: user.role || "user" });
+        const safeToken = "token_" + encodeURIComponent(username);
+        return res.json({ success: true, token: safeToken, username, role: user.role || "user" });
       }
       return res.status(401).json({ success: false, message: "用户名或密码错误" });
     }
@@ -1631,7 +1641,8 @@ async function startServer() {
     // 回退到 JSON DB
     const db = readDB();
     if (db.users[username] && await bcrypt.compare(password, db.users[username].password)) {
-      res.json({ success: true, token: "token_" + username, username });
+      const safeToken = "token_" + encodeURIComponent(username);
+      res.json({ success: true, token: safeToken, username });
     } else {
       res.status(401).json({ success: false, message: "用户名或密码错误" });
     }
@@ -2309,11 +2320,15 @@ async function startServer() {
 
   app.post("/api/chats", authMiddleware, async (req, res) => {
     const username = (req as any).username;
+    // 只保留用户实际发过消息的对话
+    const validChats = (req.body || []).filter((c: any) =>
+      c.messages && c.messages.some((m: any) => m.role === "user")
+    );
     const db = readDB();
-    db.users[username].chats = req.body;
+    db.users[username].chats = validChats;
     writeDB(db);
     // 同步到 MySQL
-    if (mysqlAvailable) mysqlSaveChats(username, req.body).catch(() => {});
+    if (mysqlAvailable) mysqlSaveChats(username, validChats).catch(() => {});
     res.json({ success: true });
   });
 
@@ -3161,19 +3176,25 @@ ${wrongDetails || "全部正确！"}`;
 
   // 保存/更新单道错题
   app.post("/api/wrong-book/save", authMiddleware, async (req, res) => {
+    const username = (req as any).username;
+    const { questionId, question, errCount } = req.body;
+    console.log(`[WrongBook] 收到保存请求: user=${username} qId=${questionId} hasQ=${!!question}`);
+    if (!questionId || !question) {
+      console.log(`[WrongBook] 参数不完整，返回 400`);
+      return res.status(400).json({ error: "参数不完整" });
+    }
     try {
-      const username = (req as any).username;
-      const { questionId, question, errCount } = req.body;
-      if (!questionId || !question) return res.status(400).json({ error: "参数不完整" });
-
       atomicDBUpdate((db) => {
         if (!db.users[username]) db.users[username] = {};
         if (!db.users[username].wrongBook) db.users[username].wrongBook = {};
         db.users[username].wrongBook[questionId] = { q: question, errCount: errCount || 1 };
       });
+      console.log(`[WrongBook] JSON 保存成功: user=${username}`);
       // 同步到 MySQL
       if (mysqlAvailable) {
-        mysqlSaveWrongQuestion(username, questionId, question, errCount || 1).catch(() => {});
+        mysqlSaveWrongQuestion(username, questionId, question, errCount || 1)
+          .then(ok => console.log(`[WrongBook] MySQL 保存: ${ok ? '成功' : '失败'}`))
+          .catch(e => console.error(`[WrongBook] MySQL 异常:`, e.message));
       }
       res.json({ success: true });
     } catch (e: any) {

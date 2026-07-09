@@ -12,13 +12,24 @@ const pool = mysql.createPool({
   password: process.env.MYSQL_PASSWORD || "",
   database: process.env.MYSQL_DATABASE || "www_db",
   waitForConnections: true,
-  connectionLimit: 10,
+  connectionLimit: 5,           // 减少闲置连接
   queueLimit: 0,
   charset: "utf8mb4",
-  enableKeepAlive: true,        // TCP 心跳保活
-  keepAliveInitialDelay: 10000, // 每 10 秒发一次心跳
-  connectTimeout: 10000,        // 连接超时 10 秒
+  enableKeepAlive: true,
+  keepAliveInitialDelay: 5000,  // 5 秒发一次心跳
+  connectTimeout: 10000,
+  idleTimeout: 30000,           // 30 秒未用则释放
+  maxIdle: 3,                   // 最多保留 3 个空闲连接
 });
+
+// 定时 ping 保活（每 30 秒）
+setInterval(async () => {
+  try {
+    const conn = await pool.getConnection();
+    await conn.ping();
+    conn.release();
+  } catch {}
+}, 30000);
 
 // 连接池错误处理：自动清理断开的连接
 pool.on("error", (err: any) => {
@@ -26,6 +37,11 @@ pool.on("error", (err: any) => {
     console.log("[MySQL] 连接已断开，连接池将自动重建");
   }
 });
+
+// 进程退出时干净关闭连接池，防止僵尸连接
+process.on("exit", () => { pool.end(); });
+process.on("SIGINT", () => { pool.end(); process.exit(); });
+process.on("SIGTERM", () => { pool.end(); process.exit(); });
 
 // ============= Initialize Database Tables =============
 export async function initMySQLDB(): Promise<boolean> {
@@ -275,8 +291,13 @@ export async function mysqlGetAdminStats(): Promise<any> {
     const [events7dR] = await pool.query<any[]>(
       "SELECT COUNT(*) as cnt FROM learning_events WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)"
     );
+    // 每日趋势（北京时间）
+    const [dailyEvents] = await pool.query<any[]>(
+      "SELECT DATE(DATE_ADD(created_at, INTERVAL 8 HOUR)) as date, COUNT(*) as count FROM learning_events WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) GROUP BY DATE(DATE_ADD(created_at, INTERVAL 8 HOUR)) ORDER BY date"
+    );
+    // 北京时间（UTC+8）
     const [eventsTodayR] = await pool.query<any[]>(
-      "SELECT COUNT(*) as cnt FROM learning_events WHERE DATE(created_at) = CURDATE()"
+      "SELECT COUNT(*) as cnt FROM learning_events WHERE DATE(DATE_ADD(created_at, INTERVAL 8 HOUR)) = CURDATE()"
     );
     // 统计有实际消息的对话条数
     const [totalChatsR] = await pool.query<any[]>(
@@ -285,9 +306,6 @@ export async function mysqlGetAdminStats(): Promise<any> {
     const [totalCardsR] = await pool.query<any[]>("SELECT COUNT(*) as cnt FROM flashcards");
     const [totalWrongR] = await pool.query<any[]>("SELECT COUNT(*) as cnt FROM wrong_book");
     const [totalReviewsR] = await pool.query<any[]>("SELECT COUNT(*) as cnt FROM review_history");
-    const [dailyEvents] = await pool.query<any[]>(
-      "SELECT DATE(created_at) as date, COUNT(*) as count FROM learning_events WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) GROUP BY DATE(created_at) ORDER BY date"
-    );
     const [eventTypes] = await pool.query<any[]>(
       "SELECT event_type, COUNT(*) as count FROM learning_events GROUP BY event_type ORDER BY count DESC"
     );
@@ -459,8 +477,10 @@ export async function mysqlGetChats(username: string): Promise<any[] | null> {
 }
 
 export async function mysqlSaveChats(username: string, chats: any[]): Promise<boolean> {
-  // 过滤空对话 + 去重（按 id）
-  const valid = chats.filter(c => c.messages && c.messages.length > 0);
+  // 只保留用户发过消息的对话 + 去重（按 id）
+  const valid = chats.filter(c =>
+    c.messages && c.messages.some((m: any) => m.role === "user")
+  );
   const seen = new Set();
   const unique = valid.filter(c => {
     if (seen.has(c.id)) return false;

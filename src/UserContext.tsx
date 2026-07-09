@@ -114,24 +114,18 @@ export function UserProvider({ children }: { children: ReactNode }) {
           setActiveChatId(data[0].id);
           return;
         }
-        // 只有在没有任何对话时才创建欢迎对话
-        if (!chats.length) {
-          const welcomeChat: Chat = {
-            id: Date.now(),
-            title: "欢迎来到智慧优学",
-            messages: [
-              {
-                id: `msg-welcome-${Date.now()}`,
-                role: "assistant",
-                content: "你好！我是智学助手 🎓\n\n在开始学习之前，我想先了解一下你的情况，这样才能为你定制专属的学习计划。\n\n**请告诉我：**\n- 你目前的学习阶段？（初中 / 高中 / 大学 / 在职学习）\n- 你想重点提升哪个学科或技能？\n- 你在学习中遇到的最大困难是什么？\n\n不用紧张，就像和朋友聊天一样，说说你的想法吧~",
-              },
-            ],
-          };
-          setChats([welcomeChat]);
-          setActiveChatId(welcomeChat.id);
-          // Save the welcome chat to server
-          saveChatsToServer([welcomeChat]);
-        }
+        // 新用户：创建欢迎对话（仅在本地，不发消息不存服务器）
+        const welcomeChat: Chat = {
+          id: Date.now(),
+          title: "欢迎来到智慧优学",
+          messages: [{
+            id: `msg-welcome-${Date.now()}`,
+            role: "assistant",
+            content: "你好！我是智学助手 🎓\n\n在开始学习之前，我想先了解一下你的情况，这样才能为你定制专属的学习计划。\n\n**请告诉我：**\n- 你目前的学习阶段？（初中 / 高中 / 大学 / 在职学习）\n- 你想重点提升哪个学科或技能？\n- 你在学习中遇到的最大困难是什么？\n\n不用紧张，就像和朋友聊天一样，说说你的想法吧~",
+          }],
+        };
+        setChats([welcomeChat]);
+        setActiveChatId(welcomeChat.id);
       }
     } catch(e) {}
   };
@@ -209,7 +203,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
     if (!isLoggedIn || chats.length === 0) return;
     const storedUser = localStorage.getItem('currentUser') || '';
     if (storedUser !== currentUser) return; // Safety: don't save if user mismatch
-    const timer = setTimeout(() => saveChatsToServer(chats), 500);
+    const timer = setTimeout(() => saveChatsToServer(chats), 0);
     return () => clearTimeout(timer);
   }, [chats]);
 
