@@ -19,9 +19,13 @@ type UserContextType = {
   setFolders: React.Dispatch<React.SetStateAction<string[]>>;
   isLoggedIn: boolean;
   setIsLoggedIn: (value: boolean) => void;
+  role: string;
+  setRole: (role: string) => void;
+  isAdmin: boolean;
   userProfile: any;
   setUserProfile: React.Dispatch<React.SetStateAction<any>>;
   fetchProfile: () => void;
+  fetchAvatar: () => void;
   authHeaders: { Authorization: string };
   emitLearningEvent: (eventType: string, payload: Record<string, any>) => void;
   chapterProgress: any;
@@ -44,6 +48,8 @@ export function UserProvider({ children }: { children: ReactNode }) {
   const [userProfile, setUserProfile] = useState<any>(null);
   const [chapterProgress, setChapterProgress] = useState<any>({ chapters: [] });
   const [notifications, setNotifications] = useState<any[]>([]);
+  const [role, setRole] = useState<string>(() => localStorage.getItem('role') || 'user');
+  const isAdmin = role === 'admin';
   // Track which user's data is currently loaded to prevent cross-account leakage
   const [currentUser, setCurrentUser] = useState<string>(() => localStorage.getItem('currentUser') || '');
 
@@ -78,6 +84,21 @@ export function UserProvider({ children }: { children: ReactNode }) {
       if (res.ok) {
         const data = await res.json();
         setUserProfile(data);
+        // 同时加载头像
+        if (data.avatar) {
+          setUserAvatar(data.avatar);
+        }
+      }
+    } catch(e) {}
+  };
+
+  const fetchAvatar = async () => {
+    if (!isLoggedIn) return;
+    try {
+      const res = await fetch("/api/user/avatar", { headers: authHeaders });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.avatar) setUserAvatar(data.avatar);
       }
     } catch(e) {}
   };
@@ -91,8 +112,10 @@ export function UserProvider({ children }: { children: ReactNode }) {
         if (data && data.length > 0) {
           setChats(data);
           setActiveChatId(data[0].id);
-        } else {
-          // First-time user: create a proactive welcome chat
+          return;
+        }
+        // 只有在没有任何对话时才创建欢迎对话
+        if (!chats.length) {
           const welcomeChat: Chat = {
             id: Date.now(),
             title: "欢迎来到智慧优学",
@@ -138,6 +161,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
       fetchChats();
       fetchFavorites();
       fetchProfile();
+      fetchAvatar();
     } else {
       // User logged out — clear all state immediately
       clearAllState();
@@ -305,7 +329,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
   }, [isLoggedIn]);
 
   return (
-    <UserContext.Provider value={{ userName, setUserName, userAvatar, setUserAvatar, chats, setChats, activeChatId, setActiveChatId, favorites, setFavorites, folders, setFolders, isLoggedIn, setIsLoggedIn, userProfile, setUserProfile, fetchProfile, authHeaders, emitLearningEvent, chapterProgress, setChapterProgress, notifications, setNotifications, markNotificationsRead }}>
+    <UserContext.Provider value={{ userName, setUserName, userAvatar, setUserAvatar, chats, setChats, activeChatId, setActiveChatId, favorites, setFavorites, folders, setFolders, isLoggedIn, setIsLoggedIn, role, setRole, isAdmin, userProfile, setUserProfile, fetchProfile, fetchAvatar, authHeaders, emitLearningEvent, chapterProgress, setChapterProgress, notifications, setNotifications, markNotificationsRead }}>
       {children}
     </UserContext.Provider>
   );

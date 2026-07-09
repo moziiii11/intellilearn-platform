@@ -7,7 +7,19 @@ import rateLimit from "express-rate-limit";
 import fs from "fs";
 import { jsonrepair } from "jsonrepair";
 import bcrypt from "bcryptjs";
-import { initMySQLDB, mysqlGetUser, mysqlCreateUser, mysqlVerifyUser, mysqlVerifyPassword, mysqlPing } from "./db-mysql.js";
+import {
+  initMySQLDB, mysqlGetUser, mysqlCreateUser, mysqlVerifyUser, mysqlVerifyPassword, mysqlPing,
+  mysqlGetProfile, mysqlSaveProfile,
+  mysqlGetChats, mysqlSaveChats,
+  mysqlGetFavorites, mysqlSaveFavorites,
+  mysqlGetEvents, mysqlInsertEvents,
+  mysqlGetWrongBook, mysqlSaveWrongQuestion, mysqlDeleteWrongQuestion,
+  mysqlGetFlashcards, mysqlSaveFlashcards, mysqlUpdateFlashcard, mysqlDeleteFlashcard,
+  mysqlGetPomodoroSessions, mysqlSavePomodoroSession,
+  mysqlGetChapterProgress, mysqlSaveChapterProgress,
+  mysqlGetReviewHistory, mysqlSaveReviewRecord, mysqlDeleteReviewRecord,
+  mysqlGetAllUsers, mysqlSetUserRole, mysqlGetAdminStats,
+} from "./db-mysql.js";
 
 dotenv.config();
 if (fs.existsSync(".env.example")) {
@@ -111,13 +123,20 @@ function hasUserEngaged(username: string, db: any): boolean {
   return hasConversations || hasBehavioralEvents || hasChats || hasProfileFromLLM;
 }
 
-function getUserProfile(username: string) {
+// ============= 统一获取学习行为事件（MySQL 优先，JSON 兜底）=============
+async function getBehavioralEvents(username: string): Promise<any[]> {
+  if (mysqlAvailable) {
+    const events = await mysqlGetEvents(username);
+    if (events.length > 0) return events;
+  }
+  // fallback: JSON
   const db = readDB();
-  if (!db.users[username]) return null;
-  const profile = db.users[username].profile || {};
+  return db.users[username]?.behavioralEvents || [];
+}
 
-  // For brand-new users with no engagement, return minimal profile (no fake scores)
-  if (!hasUserEngaged(username, db)) {
+function buildProfileResponse(username: string, behavioralEvents: any[], profile: any) {
+  const hasEvents = behavioralEvents.length > 0;
+  if (!hasEvents && Object.keys(profile?.abilityScores || {}).length === 0) {
     return {
       name: username,
       calendar: { totalActive: 0, maxStreak: 0, data: [] },
@@ -125,11 +144,9 @@ function getUserProfile(username: string) {
       abilityScores: {},
     };
   }
-
-  // Override with real data computed from behavioral events
-  const realCalendar = buildCalendarFromBehavioralEvents(username, db);
-  const realTrend = buildTrendFromBehavioralEvents(username, db);
-  const realScores = buildSubjectScoresFromBehavioralEvents(username, db, profile);
+  const realCalendar = buildCalendarFromBehavioralEvents(behavioralEvents);
+  const realTrend = buildTrendFromBehavioralEvents(behavioralEvents);
+  const realScores = buildSubjectScoresFromBehavioralEvents(behavioralEvents, profile);
   return {
     name: username,
     ...profile,
@@ -139,7 +156,46 @@ function getUserProfile(username: string) {
   };
 }
 
-function saveUserProfile(username: string, profile: any) {
+async function getUserProfile(username: string) {
+  // 纯 MySQL 读取画像
+  let profile: any = null;
+  if (mysqlAvailable) {
+    profile = await mysqlGetProfile(username);
+  }
+
+  // JSON 只做紧急兜底
+  if (!profile) {
+    const db = readDB();
+    profile = db.users[username]?.profile || {};
+  }
+
+  if (!profile || Object.keys(profile).length === 0) {
+    // 检查用户是否存在（MySQL 或 JSON）
+    const db = readDB();
+    if (!db.users[username] && mysqlAvailable) {
+      const user = await mysqlGetUser(username);
+      if (!user) return null;
+    } else if (!db.users[username]) {
+      return null;
+    }
+    return {
+      name: username,
+      calendar: { totalActive: 0, maxStreak: 0, data: [] },
+      trendData: [],
+      abilityScores: {},
+    };
+  }
+
+  const behavioralEvents = await getBehavioralEvents(username);
+  return buildProfileResponse(username, behavioralEvents, profile);
+}
+
+async function saveUserProfile(username: string, profile: any) {
+  // MySQL 主存储
+  if (mysqlAvailable) {
+    mysqlSaveProfile(username, profile).catch(e => console.error("[MySQL] Save profile failed:", e));
+  }
+  // JSON 兜底
   const db = readDB();
   if (!db.users[username]) return;
   db.users[username].profile = { ...db.users[username].profile, ...profile };
@@ -190,26 +246,27 @@ function broadcastProfileUpdate(username: string) {
   const clients = profileSSEClients.get(username);
   if (!clients || clients.length === 0) return;
 
-  const profile = getUserProfile(username);
-  const db = readDB();
-  const chapterProgress = getChapterProgress(username);
-  const notifications = db.users[username]?.notifications || [];
-
-  const eventData = JSON.stringify({
-    type: "profile_updated",
-    profile,
-    chapterProgress,
-    notifications,
-    timestamp: new Date().toISOString(),
-  });
-
-  for (const client of clients) {
-    try {
-      client.write(`data: ${eventData}\n\n`);
-    } catch (e) {
-      // Client may have disconnected; cleanup happens on 'close' event
+  // 异步获取最新画像、章节进度和通知
+  Promise.all([
+    getUserProfile(username),
+    getChapterProgress(username),
+    Promise.resolve((() => { const db = readDB(); return db.users[username]?.notifications || []; })()),
+  ]).then(([profile, chapterProgress, notifications]) => {
+    const eventData = JSON.stringify({
+      type: "profile_updated",
+      profile,
+      chapterProgress,
+      notifications,
+      timestamp: new Date().toISOString(),
+    });
+    for (const client of clients) {
+      try {
+        client.write(`data: ${eventData}\n\n`);
+      } catch (e) {
+        // Client may have disconnected
+      }
     }
-  }
+  }).catch(e => console.error("[SSE] broadcastProfileUpdate error:", e));
 }
 
 // ============= Chapter Progress Tracking =============
@@ -230,6 +287,10 @@ function saveChapterProgress(username: string, progress: any) {
     if (!db.users[username]) return;
     db.users[username].chapterProgress = progress;
   });
+  // 异步同步到 MySQL（不阻塞主流程）
+  if (mysqlAvailable) {
+    mysqlSaveChapterProgress(username, progress).catch(e => console.error("[MySQL] Save chapter progress failed:", e));
+  }
 }
 
 function registerChaptersFromResources(username: string, resources: any) {
@@ -415,8 +476,7 @@ function autoCheckChapterCompletion(username: string, db: any) {
 }
 
 // ============= Build Behavioral Summary from Learning Events =============
-function buildBehavioralSummary(username: string, db: any): string {
-  const events: any[] = db.users[username]?.behavioralEvents || [];
+function buildBehavioralSummary(events: any[]): string {
   if (events.length === 0) return "";
 
   // Focus on recent events (last 7 days)
@@ -475,8 +535,7 @@ function buildBehavioralSummary(username: string, db: any): string {
 }
 
 // ============= Build Real Calendar from Behavioral Events =============
-function buildCalendarFromBehavioralEvents(username: string, db: any) {
-  const events: any[] = db.users[username]?.behavioralEvents || [];
+function buildCalendarFromBehavioralEvents(events: any[]) {
 
   // Group events by date (last 180 days to cover half-year view)
   const daysMap: Record<string, {
@@ -626,8 +685,7 @@ function buildCalendarFromBehavioralEvents(username: string, db: any) {
 }
 
 // ============= Build Real Trend Data from Behavioral Events =============
-function buildTrendFromBehavioralEvents(username: string, db: any) {
-  const events: any[] = db.users[username]?.behavioralEvents || [];
+function buildTrendFromBehavioralEvents(events: any[]) {
   const dayNames = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
 
   // Get the past 7 days (today + 6 previous days)
@@ -669,8 +727,7 @@ function buildTrendFromBehavioralEvents(username: string, db: any) {
 }
 
 // ============= Build Real Subject Mastery Scores from Behavioral Events =============
-function buildSubjectScoresFromBehavioralEvents(username: string, db: any, existingProfile: any) {
-  const events: any[] = db.users[username]?.behavioralEvents || [];
+function buildSubjectScoresFromBehavioralEvents(events: any[], existingProfile: any) {
 
   // If no behavioral events exist, return empty — don't fabricate default scores
   if (events.length === 0) {
@@ -885,7 +942,9 @@ async function updateProfileFromConversation(username: string, conversationMessa
   const existingProfile = user.profile || {};
 
   // Build behavioral summary from recent learning events
-  const behavioralSummary = buildBehavioralSummary(username, db);
+  const behavioralSummary = buildBehavioralSummary(
+    db.users[username]?.behavioralEvents || []
+  );
 
   // Format conversation for LLM
   const conversationText = conversationMessages
@@ -1356,16 +1415,17 @@ async function startServer() {
 
   // Middleware to auto-create user on valid token
   const authMiddleware = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    let token = req.headers.authorization?.replace("Bearer token_", "");
-    if (!token) {
-      // Fallback to query parameter for EventSource SSE connections (no custom headers)
-      token = (req.query.token as string)?.replace("token_", "");
+    let raw = req.headers.authorization || "";
+    // 兼容 "Bearer token_xxx" 和 "token_xxx" 两种格式
+    if (raw.startsWith("Bearer ")) raw = raw.slice(7);
+    let username = raw.startsWith("token_") ? raw.slice(6) : raw;
+    if (!username) {
+      // Fallback to query parameter for EventSource SSE connections
+      raw = (req.query.token as string) || "";
+      username = raw.startsWith("token_") ? raw.slice(6) : raw;
     }
-    if (!token) return res.status(401).json({ error: "Unauthorized" });
-    try {
-      token = decodeURIComponent(token);
-    } catch(e) {}
-    const username = token; 
+    if (!username) return res.status(401).json({ error: "Unauthorized" });
+    try { username = decodeURIComponent(username); } catch(e) {}
     const db = readDB();
     if (!db.users[username]) {
       // Auto-recreate user if database was wiped by container restart
@@ -1386,6 +1446,167 @@ async function startServer() {
     });
   });
 
+  // ============= 管理员中间件 =============
+  const adminMiddleware = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const username = (req as any).username;
+    if (!username) return res.status(401).json({ error: "未登录" });
+    try {
+      const user = await mysqlGetUser(username);
+      if (!user || user.role !== "admin") {
+        return res.status(403).json({ error: "无管理员权限" });
+      }
+      next();
+    } catch (e) {
+      return res.status(500).json({ error: "权限校验失败" });
+    }
+  };
+
+  // ============= 管理员 API =============
+  // 获取全平台统计数据
+  app.get("/api/admin/stats", authMiddleware, adminMiddleware, async (_req, res) => {
+    try {
+      const stats = await mysqlGetAdminStats();
+      res.json(stats);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // 获取所有用户列表
+  app.get("/api/admin/users", authMiddleware, adminMiddleware, async (_req, res) => {
+    try {
+      const users = await mysqlGetAllUsers();
+      res.json(users);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // 获取详情数据（点击看板卡片时展示）
+  app.get("/api/admin/details", authMiddleware, adminMiddleware, async (req, res) => {
+    const { type } = req.query; // events | chats | wrong | cards | reviews
+    try {
+      const pool = (await import("./db-mysql.js")).default;
+      let data: any[] = [];
+      switch (type) {
+        case "events": {
+          const [rows] = await pool.query<any[]>(
+            "SELECT le.username, le.event_type, le.payload, le.created_at FROM learning_events le ORDER BY le.created_at DESC LIMIT 200"
+          );
+          data = rows;
+          break;
+        }
+        case "chats": {
+          const [rows] = await pool.query<any[]>(
+            "SELECT c.username, c.chat_data, c.updated_at FROM chats c ORDER BY c.updated_at DESC LIMIT 50"
+          );
+          // chat_data 是用户的所有对话数组，需要展开
+          for (const row of rows) {
+            const raw = typeof row.chat_data === "string" ? JSON.parse(row.chat_data) : row.chat_data;
+            const chats = Array.isArray(raw) ? raw : [];
+            for (const chat of chats) {
+              data.push({
+                username: row.username,
+                title: chat.title || chat.messages?.[0]?.content?.substring(0, 60) || "(无标题)",
+                messageCount: chat.messages?.length || 0,
+                updated_at: row.updated_at,
+              });
+            }
+          }
+          break;
+        }
+        case "wrong": {
+          const [rows] = await pool.query<any[]>(
+            "SELECT wb.username, wb.question_id, wb.question_data, wb.err_count, wb.updated_at FROM wrong_book wb ORDER BY wb.err_count DESC LIMIT 200"
+          );
+          data = rows.map(r => {
+            const q = typeof r.question_data === "string" ? JSON.parse(r.question_data) : r.question_data;
+            return {
+              username: r.username,
+              questionTitle: q?.title || "(无标题)",
+              category: q?.categoryId || "未分类",
+              difficulty: q?.difficulty || "未知",
+              errCount: r.err_count,
+              updated_at: r.updated_at,
+            };
+          });
+          break;
+        }
+        case "cards": {
+          const [rows] = await pool.query<any[]>(
+            "SELECT f.username, f.card_data, f.created_at FROM flashcards f ORDER BY f.created_at DESC LIMIT 200"
+          );
+          data = rows.map(r => {
+            const c = typeof r.card_data === "string" ? JSON.parse(r.card_data) : r.card_data;
+            return {
+              username: r.username,
+              front: c?.front || "",
+              back: c?.back || "",
+              created_at: r.created_at,
+            };
+          });
+          break;
+        }
+        case "reviews": {
+          const [rows] = await pool.query<any[]>(
+            "SELECT rh.username, rh.record_data, rh.created_at FROM review_history rh ORDER BY rh.created_at DESC LIMIT 50"
+          );
+          data = rows.map(r => {
+            const rec = typeof r.record_data === "string" ? JSON.parse(r.record_data) : r.record_data;
+            return {
+              username: r.username,
+              paperTitle: rec?.paperTitle || "专项复习",
+              totalCount: rec?.totalCount || 0,
+              correctCount: rec?.correctCount || 0,
+              accuracy: rec?.accuracy || 0,
+              created_at: r.created_at,
+            };
+          });
+          break;
+        }
+        default:
+          return res.status(400).json({ error: "无效的 type 参数" });
+      }
+      res.json({ type, data });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // 设置用户角色
+  app.post("/api/admin/users/role", authMiddleware, adminMiddleware, async (req, res) => {
+    const { username, role } = req.body;
+    if (!username || !["admin", "user"].includes(role)) {
+      return res.status(400).json({ error: "参数无效" });
+    }
+    try {
+      const ok = await mysqlSetUserRole(username, role);
+      if (ok) {
+        res.json({ success: true, message: `${username} 已${role === 'admin' ? '升级为管理员' : '降级为普通用户'}` });
+      } else {
+        res.status(500).json({ error: "操作失败" });
+      }
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // 获取当前用户角色
+  app.get("/api/auth/role", authMiddleware, async (req, res) => {
+    const username = (req as any).username;
+    try {
+      if (mysqlAvailable) {
+        const user = await mysqlGetUser(username);
+        return res.json({ role: user?.role || "user" });
+      }
+      // JSON fallback
+      const db = readDB();
+      return res.json({ role: db.users[username]?.role || "user" });
+    } catch {
+      res.json({ role: "user" });
+    }
+  });
+
   app.post("/api/auth/login", async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) {
@@ -1399,10 +1620,10 @@ async function startServer() {
         // 同步到 JSON DB，确保其他功能正常
         const db = readDB();
         if (!db.users[username]) {
-          db.users[username] = { password, phone: user.phone };
+          db.users[username] = { password, phone: user.phone, role: user.role };
           writeDB(db);
         }
-        return res.json({ success: true, token: "token_" + username, username });
+        return res.json({ success: true, token: "token_" + username, username, role: user.role || "user" });
       }
       return res.status(401).json({ success: false, message: "用户名或密码错误" });
     }
@@ -1424,6 +1645,10 @@ async function startServer() {
     // 验证手机号必须是11位数字
     if (!/^\d{11}$/.test(phone)) {
       return res.status(400).json({ success: false, message: "手机号必须为11位数字" });
+    }
+    // 密码最少8位
+    if (password.length < 8) {
+      return res.status(400).json({ success: false, message: "密码长度不能少于8位" });
     }
 
     // 优先使用 MySQL 存储
@@ -1497,16 +1722,74 @@ async function startServer() {
   });
 
   // Profile endpoints
-  app.get("/api/user-profile", authMiddleware, (req, res) => {
+  app.get("/api/user-profile", authMiddleware, async (req, res) => {
     const username = (req as any).username;
-    const profile = getUserProfile(username);
+    const profile = await getUserProfile(username);
     res.json(profile);
   });
 
-  app.post("/api/user-profile", authMiddleware, (req, res) => {
+  app.post("/api/user-profile", authMiddleware, async (req, res) => {
     const username = (req as any).username;
-    saveUserProfile(username, req.body);
+    await saveUserProfile(username, req.body);
     res.json({ success: true });
+  });
+
+  // ============= 头像上传 =============
+  app.post("/api/user/avatar", authMiddleware, async (req, res) => {
+    const username = (req as any).username;
+    const { avatar } = req.body; // base64 或 URL
+    if (!avatar || typeof avatar !== "string") {
+      return res.status(400).json({ error: "头像数据无效" });
+    }
+    // 限制头像大小（base64 约 500KB，原图约 350KB）
+    if (avatar.length > 600000) {
+      return res.status(400).json({ error: "头像文件过大，请使用小于 500KB 的图片" });
+    }
+    try {
+      // 保存到 JSON
+      atomicDBUpdate((db) => {
+        if (!db.users[username]) return;
+        if (!db.users[username].profile) db.users[username].profile = {};
+        db.users[username].profile.avatar = avatar;
+      });
+      // 同步到 MySQL（先读现有数据再合并，避免覆盖）
+      if (mysqlAvailable) {
+        try {
+          const existingProfile = await mysqlGetProfile(username);
+          const merged = { ...(existingProfile || {}), avatar };
+          const saved = await mysqlSaveProfile(username, merged);
+          if (!saved) console.error("[Avatar] MySQL 保存失败:", username);
+        } catch (err: any) {
+          console.error("[Avatar] MySQL 异常:", err.message);
+        }
+      }
+      console.log(`[Avatar] 头像已保存: ${username} (${avatar.length} 字符)`);
+      res.json({ success: true, avatar });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ============= 获取头像 =============
+  app.get("/api/user/avatar", authMiddleware, async (req, res) => {
+    const username = (req as any).username;
+    try {
+      // 优先从 MySQL profile 读取
+      if (mysqlAvailable) {
+        const profile = await mysqlGetProfile(username);
+        if (profile?.avatar) {
+          console.log(`[Avatar] MySQL 读取成功: ${username} (${profile.avatar.length} 字符)`);
+          return res.json({ avatar: profile.avatar });
+        }
+      }
+      const db = readDB();
+      const avatar = db.users[username]?.profile?.avatar || null;
+      console.log(`[Avatar] JSON 读取: ${username} → ${avatar ? '有头像(' + avatar.length + '字符)' : '无头像'}`);
+      res.json({ avatar });
+    } catch (e: any) {
+      console.error("[Avatar] 读取失败:", e.message);
+      res.json({ avatar: null });
+    }
   });
 
   // Chat endpoint
@@ -2013,33 +2296,49 @@ async function startServer() {
 
 
   // Chats endpoints
-  app.get("/api/chats", authMiddleware, (req, res) => {
+  app.get("/api/chats", authMiddleware, async (req, res) => {
     const username = (req as any).username;
+    // 优先从 MySQL 读取
+    if (mysqlAvailable) {
+      const mysqlChats = await mysqlGetChats(username);
+      if (mysqlChats !== null) return res.json(mysqlChats);
+    }
     const db = readDB();
     res.json(db.users[username].chats || []);
   });
 
-  app.post("/api/chats", authMiddleware, (req, res) => {
+  app.post("/api/chats", authMiddleware, async (req, res) => {
     const username = (req as any).username;
     const db = readDB();
     db.users[username].chats = req.body;
     writeDB(db);
+    // 同步到 MySQL
+    if (mysqlAvailable) mysqlSaveChats(username, req.body).catch(() => {});
     res.json({ success: true });
   });
 
   // Favorites endpoints
-  app.get("/api/favorites", authMiddleware, (req, res) => {
+  app.get("/api/favorites", authMiddleware, async (req, res) => {
     const username = (req as any).username;
+    // 优先从 MySQL 读取
+    if (mysqlAvailable) {
+      const mysqlFav = await mysqlGetFavorites(username);
+      if (mysqlFav !== null) return res.json(mysqlFav);
+    }
     const db = readDB();
     res.json({ favorites: db.users[username].favorites || [], folders: db.users[username].folders || ['全部收藏', '默认分类'] });
   });
 
-  app.post("/api/favorites", authMiddleware, (req, res) => {
+  app.post("/api/favorites", authMiddleware, async (req, res) => {
     const username = (req as any).username;
     const db = readDB();
     if (req.body.favorites) db.users[username].favorites = req.body.favorites;
     if (req.body.folders) db.users[username].folders = req.body.folders;
     writeDB(db);
+    // 同步到 MySQL
+    if (mysqlAvailable) {
+      mysqlSaveFavorites(username, req.body).catch(() => {});
+    }
     logUserAction(username, "favorite", "更新了收藏夹");
     res.json({ success: true });
   });
@@ -2059,7 +2358,7 @@ async function startServer() {
   });
 
   // ============= Learning Behavior Events =============
-  app.post("/api/learning-events", authMiddleware, (req, res) => {
+  app.post("/api/learning-events", authMiddleware, async (req, res) => {
     const username = (req as any).username;
     const { events } = req.body;
 
@@ -2070,23 +2369,32 @@ async function startServer() {
     if (!db.users[username]) return res.status(404).json({ error: "user not found" });
     if (!db.users[username].behavioralEvents) db.users[username].behavioralEvents = [];
 
+    const now = new Date().toISOString();
     for (const evt of eventArray) {
       if (!evt.eventType || !evt.payload) continue;
       db.users[username].behavioralEvents.push({
-        timestamp: new Date().toISOString(),
+        timestamp: now,
         eventType: evt.eventType,
         payload: evt.payload,
       });
-      // Also keep existing log for backward compatibility
       logUserAction(username, evt.eventType, JSON.stringify(evt.payload).substring(0, 500));
     }
 
-    // Trim old events to prevent unbounded growth (keep last 500)
+    // Trim old events (keep last 500)
     if (db.users[username].behavioralEvents.length > 500) {
       db.users[username].behavioralEvents = db.users[username].behavioralEvents.slice(-500);
     }
 
     writeDB(db);
+
+    // 异步同步到 MySQL（mysqlInsertEvents 内部会转换时间格式）
+    if (mysqlAvailable) {
+      mysqlInsertEvents(username, eventArray.map(e => ({
+        eventType: e.eventType,
+        payload: e.payload,
+        timestamp: e.timestamp || now,
+      }))).catch(e => console.error("[MySQL] Insert events async error:", e));
+    }
 
     // Check if behavioral thresholds are met for incremental resource adaptation
     checkBehavioralThresholds(username, db).catch((e) =>
@@ -2103,7 +2411,7 @@ async function startServer() {
   });
 
   // ============= SSE Profile Update Stream =============
-  app.get("/api/profile/stream", authMiddleware, (req, res) => {
+  app.get("/api/profile/stream", authMiddleware, async (req, res) => {
     const username = (req as any).username;
     setupSSE(req, res);
 
@@ -2117,7 +2425,7 @@ async function startServer() {
     res.write(":ok\n\n");
 
     // Send initial profile data immediately
-    const currentProfile = getUserProfile(username);
+    const currentProfile = await getUserProfile(username);
     const currentChapterProgress = getChapterProgress(username);
     const db2 = readDB();
     const currentNotifications = db2.users[username]?.notifications || [];
@@ -2717,6 +3025,11 @@ ${wrongDetails || "全部正确！"}`;
       db.users[username].reviewHistory.push(record);
       writeDB(db);
 
+      // 同步到 MySQL
+      if (mysqlAvailable) {
+        mysqlSaveReviewRecord(username, record).catch(() => {});
+      }
+
       console.log(`[ReviewHistory] Saved record ${record.id} for user "${username}"`);
       res.json({ success: true, id: record.id });
     } catch (e: any) {
@@ -2729,16 +3042,25 @@ ${wrongDetails || "全部正确！"}`;
   app.get("/api/review-history", authMiddleware, async (req, res) => {
     try {
       const username = (req as any).username;
+      // 优先从 MySQL 读取
+      if (mysqlAvailable) {
+        const mysqlHistory = await mysqlGetReviewHistory(username);
+        if (mysqlHistory.length > 0) {
+          const summary = mysqlHistory.map((r: any) => ({
+            id: r.id, date: r.date, paperTitle: r.paperTitle,
+            totalCount: r.totalCount, correctCount: r.correctCount,
+            wrongCount: r.wrongCount, accuracy: r.accuracy,
+            knowledgePoints: r.knowledgePoints?.map((kp: any) => kp.name) || [],
+          })).sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+          return res.json(summary);
+        }
+      }
       const db = readDB();
       const history = (db.users[username]?.reviewHistory || [])
         .map((r: any) => ({
-          id: r.id,
-          date: r.date,
-          paperTitle: r.paperTitle,
-          totalCount: r.totalCount,
-          correctCount: r.correctCount,
-          wrongCount: r.wrongCount,
-          accuracy: r.accuracy,
+          id: r.id, date: r.date, paperTitle: r.paperTitle,
+          totalCount: r.totalCount, correctCount: r.correctCount,
+          wrongCount: r.wrongCount, accuracy: r.accuracy,
           knowledgePoints: r.knowledgePoints?.map((kp: any) => kp.name) || [],
         }))
         .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -2774,6 +3096,10 @@ ${wrongDetails || "全部正确！"}`;
           (r: any) => r.id !== req.params.id
         );
       });
+      // 同步到 MySQL
+      if (mysqlAvailable) {
+        mysqlDeleteReviewRecord(username, req.params.id).catch(() => {});
+      }
       res.json({ success: true });
     } catch (e: any) {
       console.error("[ReviewHistory] Delete failed:", e.message);
@@ -2799,6 +3125,12 @@ ${wrongDetails || "全部正确！"}`;
         );
         deletedCount = before - db.users[username].reviewHistory.length;
       });
+      // 同步到 MySQL
+      if (mysqlAvailable) {
+        for (const id of ids) {
+          mysqlDeleteReviewRecord(username, id).catch(() => {});
+        }
+      }
       console.log(`[ReviewHistory] Batch deleted ${deletedCount} records for user "${username}"`);
       res.json({ success: true, deletedCount });
     } catch (e: any) {
@@ -2809,10 +3141,15 @@ ${wrongDetails || "全部正确！"}`;
 
   // ============= 错题本持久化 =============
 
-  // 获取错题本 (read-only, no lock needed)
+  // 获取错题本
   app.get("/api/wrong-book", authMiddleware, async (req, res) => {
     try {
       const username = (req as any).username;
+      // 优先从 MySQL 读取
+      if (mysqlAvailable) {
+        const mysqlWB = await mysqlGetWrongBook(username);
+        if (Object.keys(mysqlWB).length > 0) return res.json(mysqlWB);
+      }
       const db = readDB();
       const wrongBook = db.users[username]?.wrongBook || {};
       res.json(wrongBook);
@@ -2822,7 +3159,7 @@ ${wrongDetails || "全部正确！"}`;
     }
   });
 
-  // 保存/更新单道错题 (atomic)
+  // 保存/更新单道错题
   app.post("/api/wrong-book/save", authMiddleware, async (req, res) => {
     try {
       const username = (req as any).username;
@@ -2834,6 +3171,10 @@ ${wrongDetails || "全部正确！"}`;
         if (!db.users[username].wrongBook) db.users[username].wrongBook = {};
         db.users[username].wrongBook[questionId] = { q: question, errCount: errCount || 1 };
       });
+      // 同步到 MySQL
+      if (mysqlAvailable) {
+        mysqlSaveWrongQuestion(username, questionId, question, errCount || 1).catch(() => {});
+      }
       res.json({ success: true });
     } catch (e: any) {
       console.error("[WrongBook] Save failed:", e.message);
@@ -2841,7 +3182,7 @@ ${wrongDetails || "全部正确！"}`;
     }
   });
 
-  // 删除单道错题 (atomic)
+  // 删除单道错题
   app.delete("/api/wrong-book/:questionId", authMiddleware, async (req, res) => {
     try {
       const username = (req as any).username;
@@ -2850,6 +3191,10 @@ ${wrongDetails || "全部正确！"}`;
           delete db.users[username].wrongBook[req.params.questionId];
         }
       });
+      // 同步到 MySQL
+      if (mysqlAvailable) {
+        mysqlDeleteWrongQuestion(username, req.params.questionId).catch(() => {});
+      }
       res.json({ success: true });
     } catch (e: any) {
       console.error("[WrongBook] Delete failed:", e.message);
@@ -2858,9 +3203,14 @@ ${wrongDetails || "全部正确！"}`;
   });
 
   // ============= Spaced Repetition Flashcards =============
-  app.get("/api/flashcards", authMiddleware, (req, res) => {
+  app.get("/api/flashcards", authMiddleware, async (req, res) => {
     try {
       const username = (req as any).username;
+      // 优先从 MySQL 读取
+      if (mysqlAvailable) {
+        const mysqlCards = await mysqlGetFlashcards(username);
+        if (mysqlCards.length > 0) return res.json(mysqlCards);
+      }
       const db = readDB();
       res.json(db.users[username]?.flashcards || []);
     } catch (e: any) {
@@ -2869,7 +3219,7 @@ ${wrongDetails || "全部正确！"}`;
     }
   });
 
-  app.post("/api/flashcards", authMiddleware, (req, res) => {
+  app.post("/api/flashcards", authMiddleware, async (req, res) => {
     try {
       const username = (req as any).username;
       const { cards } = req.body;
@@ -2877,12 +3227,12 @@ ${wrongDetails || "全部正确！"}`;
         return res.status(400).json({ error: "卡片数据不能为空" });
       }
 
+      let addedCount = 0;
       atomicDBUpdate((db) => {
         if (!db.users[username]) return;
         if (!db.users[username].flashcards) db.users[username].flashcards = [];
 
         const existingIds = new Set(db.users[username].flashcards.map((c: any) => c.id));
-        let addedCount = 0;
         for (const card of cards) {
           if (!existingIds.has(card.id)) {
             db.users[username].flashcards.push(card);
@@ -2903,6 +3253,11 @@ ${wrongDetails || "全部正确！"}`;
         }
       });
 
+      // 同步到 MySQL
+      if (mysqlAvailable && addedCount > 0) {
+        mysqlSaveFlashcards(username, cards).catch(() => {});
+      }
+
       broadcastProfileUpdate(username);
       res.json({ success: true });
     } catch (e: any) {
@@ -2911,7 +3266,7 @@ ${wrongDetails || "全部正确！"}`;
     }
   });
 
-  app.post("/api/flashcards/review", authMiddleware, (req, res) => {
+  app.post("/api/flashcards/review", authMiddleware, async (req, res) => {
     try {
       const username = (req as any).username;
       const { cardId, quality } = req.body;
@@ -2952,6 +3307,13 @@ ${wrongDetails || "全部正确！"}`;
           payload: { cardId, quality },
         });
       });
+
+      // 同步更新到 MySQL
+      if (mysqlAvailable) {
+        const db = readDB();
+        const card = db.users[username]?.flashcards?.find((c: any) => c.id === cardId);
+        if (card) mysqlUpdateFlashcard(username, cardId, card).catch(() => {});
+      }
 
       broadcastProfileUpdate(username);
       res.json({ success: true });
@@ -3097,7 +3459,7 @@ ${pathContext}
     }
   });
 
-  app.delete("/api/flashcards/:id", authMiddleware, (req, res) => {
+  app.delete("/api/flashcards/:id", authMiddleware, async (req, res) => {
     try {
       const username = (req as any).username;
       atomicDBUpdate((db) => {
@@ -3106,6 +3468,10 @@ ${pathContext}
           (c: any) => c.id !== req.params.id
         );
       });
+      // 同步到 MySQL
+      if (mysqlAvailable) {
+        mysqlDeleteFlashcard(username, req.params.id).catch(() => {});
+      }
       res.json({ success: true });
     } catch (e: any) {
       console.error("[Flashcards] Delete failed:", e.message);
@@ -3114,27 +3480,28 @@ ${pathContext}
   });
 
   // ============= Pomodoro Timer =============
-  app.post("/api/pomodoro-sessions", authMiddleware, (req, res) => {
+  app.post("/api/pomodoro-sessions", authMiddleware, async (req, res) => {
     try {
       const username = (req as any).username;
       const { duration, type, completed } = req.body;
       if (!duration || !type) return res.status(400).json({ error: "参数不完整" });
 
+      const session = {
+        id: "pomo-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6),
+        date: new Date().toISOString().split("T")[0],
+        startTime: new Date(new Date().getTime() - duration * 60000).toISOString(),
+        endTime: new Date().toISOString(),
+        duration,
+        type,
+        completed: completed !== false,
+        interrupted: false,
+      };
+
       atomicDBUpdate((db) => {
         if (!db.users[username]) return;
         if (!db.users[username].pomodoroSessions) db.users[username].pomodoroSessions = [];
-        db.users[username].pomodoroSessions.push({
-          id: "pomo-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6),
-          date: new Date().toISOString().split("T")[0],
-          startTime: new Date(new Date().getTime() - duration * 60000).toISOString(),
-          endTime: new Date().toISOString(),
-          duration,
-          type,
-          completed: completed !== false,
-          interrupted: false,
-        });
+        db.users[username].pomodoroSessions.push(session);
 
-        // Record behavioral event for calendar heatmap
         if (!db.users[username].behavioralEvents) db.users[username].behavioralEvents = [];
         db.users[username].behavioralEvents.push({
           timestamp: new Date().toISOString(),
@@ -3142,11 +3509,15 @@ ${pathContext}
           payload: { duration, type, completed: completed !== false },
         });
 
-        // Trim sessions to last 500
         if (db.users[username].pomodoroSessions.length > 500) {
           db.users[username].pomodoroSessions = db.users[username].pomodoroSessions.slice(-500);
         }
       });
+
+      // 同步到 MySQL
+      if (mysqlAvailable) {
+        mysqlSavePomodoroSession(username, session).catch(() => {});
+      }
 
       broadcastProfileUpdate(username);
       res.json({ success: true });
@@ -3156,9 +3527,14 @@ ${pathContext}
     }
   });
 
-  app.get("/api/pomodoro-sessions", authMiddleware, (req, res) => {
+  app.get("/api/pomodoro-sessions", authMiddleware, async (req, res) => {
     try {
       const username = (req as any).username;
+      // 优先从 MySQL 读取
+      if (mysqlAvailable) {
+        const mysqlSessions = await mysqlGetPomodoroSessions(username);
+        if (mysqlSessions.length > 0) return res.json(mysqlSessions);
+      }
       const db = readDB();
       const sessions = db.users[username]?.pomodoroSessions || [];
       res.json(sessions);

@@ -21,7 +21,7 @@ export default function Auth() {
   const [showSuccessToast, setShowSuccessToast] = useState(false);
   const [phoneError, setPhoneError] = useState('');
 
-  const { setIsLoggedIn, setUserName } = useUser();
+  const { setIsLoggedIn, setUserName, setRole } = useUser();
   const navigate = useNavigate();
 
   // 验证手机号是否为11位数字
@@ -49,6 +49,9 @@ export default function Auth() {
           setIsLoggedIn(true);
           localStorage.setItem('token', data.token);
           localStorage.setItem('currentUser', data.username);
+          const userRole = data.role || 'user';
+          setRole(userRole);
+          localStorage.setItem('role', userRole);
           navigate('/');
         } else {
           setErrorMsg(data.message || '用户名或密码错误');
@@ -56,6 +59,11 @@ export default function Auth() {
       } else {
         // 注册时校验手机号
         if (!validatePhone(phone)) return;
+        // 密码最少8位
+        if (password.length < 8) {
+          setErrorMsg('密码长度不能少于8位');
+          return;
+        }
         const res = await fetch("/api/auth/register", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ username: name, password, phone })
@@ -209,6 +217,7 @@ export default function Auth() {
                         {showPassword ? <EyeOff className="w-[1.125rem] h-[1.125rem]" /> : <Eye className="w-[1.125rem] h-[1.125rem]" />}
                       </button>
                     </div>
+                    {newPassword.length > 0 && <PasswordStrength password={newPassword} />}
                   </div>
                   <div className="pt-2">
                     <button type="submit" className="group w-full flex items-center justify-center gap-2 py-3.5 px-4 bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white rounded-2xl font-bold text-[15px] shadow-[0_4px_20px_0_rgba(59,130,246,0.3)] hover:shadow-[0_8px_25px_rgba(59,130,246,0.4)] hover:scale-[1.02] transition-all duration-300 outline-none focus:ring-4 focus:ring-blue-500/30">
@@ -311,6 +320,11 @@ export default function Auth() {
                   </button>
                 </div>
               </div>
+
+              {/* 密码强度提示 — 仅注册时显示 */}
+              {!isLogin && password.length > 0 && (
+                <PasswordStrength password={password} />
+              )}
 
               {/* Phone Field during Registration */}
               {!isLogin && (
@@ -415,6 +429,58 @@ export default function Auth() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** 密码强度检测组件 */
+function PasswordStrength({ password }: { password: string }) {
+  const checks = {
+    length: password.length >= 8,
+    upper: /[A-Z]/.test(password),
+    lower: /[a-z]/.test(password),
+    number: /[0-9]/.test(password),
+    special: /[!@#$%^&*(),.?":{}|<>]/.test(password),
+  };
+  const score = Object.values(checks).filter(Boolean).length;
+
+  const levels = [
+    { min: 0, label: "太弱", color: "bg-red-400", text: "text-red-500", width: "w-1/5" },
+    { min: 1, label: "弱", color: "bg-orange-400", text: "text-orange-500", width: "w-2/5" },
+    { min: 3, label: "一般", color: "bg-yellow-400", text: "text-yellow-600", width: "w-3/5" },
+    { min: 4, label: "强", color: "bg-green-400", text: "text-green-500", width: "w-4/5" },
+    { min: 5, label: "很强", color: "bg-emerald-500", text: "text-emerald-600", width: "w-full" },
+  ];
+  const level = [...levels].reverse().find(l => score >= l.min)!;
+
+  const tips = [
+    { key: "length", label: "至少8位" },
+    { key: "upper", label: "大写字母" },
+    { key: "lower", label: "小写字母" },
+    { key: "number", label: "数字" },
+    { key: "special", label: "特殊符号" },
+  ];
+
+  return (
+    <div className="mt-2 ml-1">
+      {/* 强度条 */}
+      <div className="flex items-center gap-2 mb-1.5">
+        <div className="flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+          <div className={`h-full rounded-full transition-all duration-300 ${level.color} ${level.width}`}></div>
+        </div>
+        <span className={`text-xs font-bold ${level.text}`}>{level.label}</span>
+      </div>
+      {/* 详细提示 */}
+      <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+        {tips.map(t => {
+          const ok = checks[t.key as keyof typeof checks];
+          return (
+            <span key={t.key} className={`text-[11px] ${ok ? "text-green-600" : "text-slate-400"}`}>
+              {ok ? "✅" : "○"} {t.label}
+            </span>
+          );
+        })}
+      </div>
     </div>
   );
 }

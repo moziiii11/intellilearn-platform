@@ -1,18 +1,23 @@
 import React, { useState, useRef } from "react";
 import { createPortal } from "react-dom";
 import { NavLink, Outlet, useNavigate } from "react-router";
-import { User, BookOpen, MessageSquare, LayoutDashboard, LogOut, X, Upload, CheckCircle2, Layers } from "lucide-react";
+import { User, BookOpen, MessageSquare, LayoutDashboard, LogOut, X, Upload, CheckCircle2, Layers, BarChart3 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useUser } from "../UserContext";
 import PomodoroTimer from "./PomodoroTimer";
 
 export default function Layout() {
-  const { userName, setUserName, userAvatar, setUserAvatar, setIsLoggedIn } = useUser();
+  const { userName, setUserName, userAvatar, setUserAvatar, setIsLoggedIn, isAdmin, authHeaders } = useUser();
   const navigate = useNavigate();
   
   const [showEditModal, setShowEditModal] = useState(false);
   const [editName, setEditName] = useState(userName);
   const [editAvatarPreview, setEditAvatarPreview] = useState<string | null>(userAvatar);
+  const [avatarError, setAvatarError] = useState("");
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [showCompressDialog, setShowCompressDialog] = useState(false);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [pendingSize, setPendingSize] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const handleLogout = () => {
@@ -22,21 +27,98 @@ export default function Layout() {
     navigate('/auth');
   };
 
+  /** Canvas 压缩到目标 KB（二分查找最佳 JPEG 质量） */
+  function compressToTarget(img: HTMLImageElement, targetKB: number): string {
+    const maxDim = 400;
+    let w = img.width, h = img.height;
+    if (w > maxDim || h > maxDim) {
+      const ratio = Math.min(maxDim / w, maxDim / h);
+      w = Math.round(w * ratio); h = Math.round(h * ratio);
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext("2d")!;
+    let lo = 0.1, hi = 1.0, best = "";
+    for (let i = 0; i < 8; i++) {
+      const mid = (lo + hi) / 2;
+      ctx.drawImage(img, 0, 0, w, h);
+      const r = canvas.toDataURL("image/jpeg", mid);
+      if (r.length / 1024 <= targetKB) { best = r; lo = mid; }
+      else { hi = mid; }
+    }
+    return best || canvas.toDataURL("image/jpeg", 0.3);
+  }
+
   const handleAvatarUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
+    if (!file) return;
+    setAvatarError("");
+    const fileKB = file.size / 1024;
+    if (fileKB <= 500) {
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setEditAvatarPreview(reader.result as string);
-      };
+      reader.onloadend = () => setEditAvatarPreview(reader.result as string);
       reader.readAsDataURL(file);
+    } else {
+      setPendingFile(file);
+      setPendingSize(Math.round(fileKB));
+      setShowCompressDialog(true);
     }
+    e.target.value = "";
   };
 
-  const handleSaveProfile = () => {
+  /** 用户确认压缩 */
+  const handleCompress = () => {
+    if (!pendingFile) return;
+    const img = new Image();
+    img.onload = () => {
+      setEditAvatarPreview(compressToTarget(img, 400));
+      setShowCompressDialog(false);
+      setPendingFile(null);
+    };
+    img.src = URL.createObjectURL(pendingFile);
+  };
+
+  /** 用户选择换图片 */
+  const handleChangeImage = () => {
+    setShowCompressDialog(false);
+    setPendingFile(null);
+    fileInputRef.current?.click();
+  };
+
+  const handleSaveProfile = async () => {
     setUserName(editName);
-    setUserAvatar(editAvatarPreview);
-    setShowEditModal(false);
+    localStorage.setItem('currentUser', editName);
+    setAvatarError("");
+
+    // 上传头像到服务器
+    if (editAvatarPreview && editAvatarPreview !== userAvatar) {
+      // 前端再校验一次大小
+      if (editAvatarPreview.length > 500000) {
+        setAvatarError("图片过大，请使用更小的图片");
+        return; // 不关弹窗，让用户重新选
+      }
+      setAvatarUploading(true);
+      try {
+        const res = await fetch('/api/user/avatar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeaders },
+          body: JSON.stringify({ avatar: editAvatarPreview }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          setUserAvatar(data.avatar);
+          setShowEditModal(false);
+        } else {
+          setAvatarError(data.error || '保存失败');
+        }
+      } catch (e) {
+        setAvatarError('网络错误，请重试');
+      } finally {
+        setAvatarUploading(false);
+      }
+    } else {
+      setShowEditModal(false);
+    }
   };
   
   const openEditModal = () => {
@@ -50,6 +132,7 @@ export default function Layout() {
     { name: "学习资源", path: "/resources", icon: BookOpen },
     { name: "闪卡复习", path: "/flashcards", icon: Layers },
     { name: "个人中心", path: "/profile", icon: LayoutDashboard },
+    ...(isAdmin ? [{ name: "数据看板", path: "/admin", icon: BarChart3 }] : []),
   ];
 
   return (
@@ -106,19 +189,51 @@ export default function Layout() {
                 />
               </div>
             </div>
+            {/* 压缩选择弹窗 */}
+            {showCompressDialog && (
+              <div className="px-6 py-3 bg-amber-50 border-t border-amber-100">
+                <p className="text-sm font-bold text-amber-800 text-center mb-3">
+                  ⚠️ 图片过大（{pendingSize} KB），超过 500KB 限制
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleChangeImage}
+                    className="flex-1 px-3 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors"
+                  >
+                    换一张
+                  </button>
+                  <button
+                    onClick={handleCompress}
+                    className="flex-1 px-3 py-2 text-sm font-bold text-white bg-amber-500 rounded-xl hover:bg-amber-600 transition-colors shadow-sm"
+                  >
+                    压缩到 400KB
+                  </button>
+                </div>
+              </div>
+            )}
+            {/* 错误提示 */}
+            {avatarError && (
+              <div className="px-6 py-2">
+                <p className="text-sm text-red-500 font-medium bg-red-50 border border-red-100 rounded-xl px-3 py-2 text-center">{avatarError}</p>
+              </div>
+            )}
             <div className="px-6 py-5 bg-slate-50 border-t border-slate-100 flex gap-3">
               <button
-                onClick={() => setShowEditModal(false)}
+                onClick={() => { setShowEditModal(false); setAvatarError(""); }}
                 className="flex-1 px-4 py-2.5 rounded-xl text-slate-600 font-medium hover:bg-slate-200/50 transition-colors"
               >
                 取消
               </button>
               <button
                 onClick={handleSaveProfile}
-                disabled={!editName.trim()}
+                disabled={!editName.trim() || avatarUploading}
                 className="flex-1 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-medium shadow-sm shadow-blue-600/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <CheckCircle2 className="w-4 h-4" /> 保存修改
+                {avatarUploading ? (
+                  <><span className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></span> 上传中...</>
+                ) : (
+                  <><CheckCircle2 className="w-4 h-4" /> 保存修改</>
+                )}
               </button>
             </div>
           </div>

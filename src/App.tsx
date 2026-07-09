@@ -9,11 +9,12 @@ import Home from "./pages/Home";
 import Resources from "./pages/Resources";
 import Profile from "./pages/Profile";
 import FlashcardsPage from "./pages/FlashcardsPage";
+import AdminDashboard from "./pages/AdminDashboard";
 import Auth from "./pages/Auth";
 import { UserProvider, useUser } from "./UserContext";
 
 function AppRoutes() {
-  const { isLoggedIn } = useUser();
+  const { isLoggedIn, isAdmin } = useUser();
 
   return (
     <Routes>
@@ -23,6 +24,7 @@ function AppRoutes() {
         <Route path="resources" element={<Resources />} />
         <Route path="flashcards" element={<FlashcardsPage />} />
         <Route path="profile" element={<Profile />} />
+        <Route path="admin" element={isAdmin ? <AdminDashboard /> : <Navigate to="/" />} />
       </Route>
     </Routes>
   );
