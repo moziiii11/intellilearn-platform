@@ -206,15 +206,11 @@ export default function PomodoroTimer() {
 
   const handleWhiteNoise = (id: string) => {
     setWhiteNoise(id);
-<<<<<<< HEAD
     // Clean up previous audio
-=======
->>>>>>> 8a02dccacfbb4fd726ae0344983120cac06df847
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current = null;
     }
-<<<<<<< HEAD
     if (id === "none") return;
 
     const SOUND_FILES: Record<string, string> = {
@@ -232,28 +228,6 @@ export default function PomodoroTimer() {
     audio.volume = 0.4;
     audio.play().catch(() => {});
     audioRef.current = audio;
-=======
-    if (id !== "none") {
-      try {
-        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        const bufferSize = 2 * audioCtx.sampleRate;
-        const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
-        const data = buffer.getChannelData(0);
-        for (let i = 0; i < bufferSize; i++) {
-          data[i] = (Math.random() * 2 - 1) * 0.1;
-        }
-        const source = audioCtx.createBufferSource();
-        source.buffer = buffer;
-        source.loop = true;
-        const gainNode = audioCtx.createGain();
-        gainNode.gain.value = 0.3;
-        source.connect(gainNode);
-        gainNode.connect(audioCtx.destination);
-        source.start();
-        audioRef.current = { pause: () => { source.stop(); audioCtx.close(); } } as any;
-      } catch (e) {}
-    }
->>>>>>> 8a02dccacfbb4fd726ae0344983120cac06df847
   };
 
   return (
