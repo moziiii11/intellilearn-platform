@@ -41,8 +41,20 @@ export function UserProvider({ children }: { children: ReactNode }) {
   const [isLoggedIn, setIsLoggedIn] = useState(() => !!localStorage.getItem('token'));
   const [userName, setUserName] = useState(() => localStorage.getItem('currentUser') || "AI探险家");
   const [userAvatar, setUserAvatar] = useState<string | null>(null);
-  const [chats, setChats] = useState<Chat[]>([]);
-  const [activeChatId, setActiveChatId] = useState<number>(1);
+  const [chats, setChats] = useState<Chat[]>(() => {
+    try {
+      const saved = localStorage.getItem('chats');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [];
+  });
+  const [activeChatId, setActiveChatId] = useState<number>(() => {
+    const saved = localStorage.getItem('activeChatId');
+    return saved ? parseInt(saved, 10) : 1;
+  });
   const [folders, setFolders] = useState<string[]>(['全部收藏', '默认分类']);
   const [favorites, setFavorites] = useState<Favorite[]>([]);
   const [userProfile, setUserProfile] = useState<any>(null);
@@ -52,6 +64,16 @@ export function UserProvider({ children }: { children: ReactNode }) {
   const isAdmin = role === 'admin';
   // Track which user's data is currently loaded to prevent cross-account leakage
   const [currentUser, setCurrentUser] = useState<string>(() => localStorage.getItem('currentUser') || '');
+  // Ref for latest chats — used by beforeunload handler to guarantee flush
+  const chatsRef = useRef<Chat[]>(chats);
+  useEffect(() => { chatsRef.current = chats; }, [chats]);
+
+  // Persist activeChatId to localStorage on change
+  useEffect(() => {
+    if (activeChatId && activeChatId !== 1) {
+      localStorage.setItem('activeChatId', String(activeChatId));
+    }
+  }, [activeChatId]);
 
   const getToken = () => {
     const rawToken = localStorage.getItem('token') || '';
@@ -69,6 +91,8 @@ export function UserProvider({ children }: { children: ReactNode }) {
   const clearAllState = () => {
     setChats([]);
     setActiveChatId(1);
+    localStorage.removeItem('activeChatId');
+    localStorage.removeItem('chats');
     setFavorites([]);
     setFolders(['全部收藏', '默认分类']);
     setUserProfile(null);
@@ -111,9 +135,38 @@ export function UserProvider({ children }: { children: ReactNode }) {
         const data = await res.json();
         if (data && data.length > 0) {
           setChats(data);
+          // Restore last active chat if it still exists in loaded data
+          const savedActiveId = localStorage.getItem('activeChatId');
+          if (savedActiveId) {
+            const parsedId = parseInt(savedActiveId, 10);
+            if (data.some((c: Chat) => c.id === parsedId)) {
+              setActiveChatId(parsedId);
+              return;
+            }
+          }
           setActiveChatId(data[0].id);
           return;
         }
+        // Server has no data — fall back to localStorage
+        try {
+          const localChats = localStorage.getItem('chats');
+          if (localChats) {
+            const parsed = JSON.parse(localChats);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setChats(parsed);
+              const savedActiveId = localStorage.getItem('activeChatId');
+              if (savedActiveId) {
+                const parsedId = parseInt(savedActiveId, 10);
+                if (parsed.some((c: Chat) => c.id === parsedId)) {
+                  setActiveChatId(parsedId);
+                  return;
+                }
+              }
+              setActiveChatId(parsed[0].id);
+              return;
+            }
+          }
+        } catch {}
         // 新用户：创建欢迎对话（仅在本地，不发消息不存服务器）
         const welcomeChat: Chat = {
           id: Date.now(),
@@ -198,14 +251,50 @@ export function UserProvider({ children }: { children: ReactNode }) {
     } catch(e) {}
   };
 
-  // Auto-save chats on change (debounced, only when logged in and user matches)
+  // Auto-save chats: localStorage immediately (sync, survives refresh), server debounced 2s
   useEffect(() => {
     if (!isLoggedIn || chats.length === 0) return;
     const storedUser = localStorage.getItem('currentUser') || '';
     if (storedUser !== currentUser) return; // Safety: don't save if user mismatch
-    const timer = setTimeout(() => saveChatsToServer(chats), 0);
+    // Write to localStorage synchronously — survives page refresh
+    try { localStorage.setItem('chats', JSON.stringify(chats)); } catch {}
+    // Also debounce server save for cross-device persistence
+    const timer = setTimeout(() => saveChatsToServer(chats), 2000);
     return () => clearTimeout(timer);
   }, [chats]);
+
+  // Guaranteed flush on page unload / tab hidden (beforeunload + visibilitychange)
+  useEffect(() => {
+    const flushChats = () => {
+      const latestChats = chatsRef.current;
+      if (!isLoggedIn || latestChats.length === 0) return;
+      const storedUser = localStorage.getItem('currentUser') || '';
+      if (storedUser !== currentUser) return;
+      // Filter valid chats client-side (same logic as server POST /api/chats)
+      const validChats = latestChats.filter(
+        (c) => c.messages && c.messages.some((m) => m.role === 'user')
+      );
+      if (validChats.length === 0) return;
+      // fetch with keepalive: true guarantees the request completes even on page unload
+      fetch('/api/chats', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getToken()}` },
+        body: JSON.stringify(validChats),
+        keepalive: true,
+      });
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') flushChats();
+    };
+
+    window.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('beforeunload', flushChats);
+    return () => {
+      window.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('beforeunload', flushChats);
+    };
+  }, [isLoggedIn, currentUser]);
 
   // Auto-save favorites on change
   useEffect(() => {
