@@ -256,24 +256,24 @@ export default function Resources() {
           ))}
         </div>
 
-        {/* Main Content Area */}
-        <div className="flex-1 bg-white/40 backdrop-blur-md rounded-3xl border-2 border-blue-400 p-6 shadow-[0_8px_30px_rgba(0,0,0,0.04)] min-h-0 flex flex-col relative overflow-hidden transition-all duration-300">
-          <div className={`h-full ${activeTab === "课程文档" ? "block" : "hidden"}`}>
+        {/* Main Content Area — grid 单个单元格叠加所有 tab，仅活跃 tab 可见，保持尺寸不变 */}
+        <div className="flex-1 bg-white/40 backdrop-blur-md rounded-3xl border-2 border-blue-400 shadow-[0_8px_30px_rgba(0,0,0,0.04)] min-h-0 grid overflow-hidden transition-all duration-300" style={{ gridTemplateRows: "1fr", gridTemplateColumns: "1fr" }}>
+          <div className="p-6 overflow-hidden" style={{ gridRow: 1, gridColumn: 1, visibility: activeTab === "课程文档" ? "visible" : "hidden" }}>
             <DocumentModule />
           </div>
-          <div className={`h-full ${activeTab === "思维导图" ? "block" : "hidden"}`}>
+          <div className="p-6 overflow-hidden" style={{ gridRow: 1, gridColumn: 1, visibility: activeTab === "思维导图" ? "visible" : "hidden" }}>
             <MindmapModule />
           </div>
-          <div className={`h-full ${activeTab === "习题" ? "block" : "hidden"}`}>
+          <div className="p-6 overflow-hidden" style={{ gridRow: 1, gridColumn: 1, visibility: activeTab === "习题" ? "visible" : "hidden" }}>
             <ExerciseModule />
           </div>
-          <div className={`h-full ${activeTab === "代码实操" ? "block" : "hidden"}`}>
+          <div className="p-6 overflow-hidden" style={{ gridRow: 1, gridColumn: 1, visibility: activeTab === "代码实操" ? "visible" : "hidden" }}>
             <CodeModule />
           </div>
-          <div className={`h-full ${activeTab === "拓展材料" ? "block" : "hidden"}`}>
+          <div className="p-6 overflow-hidden" style={{ gridRow: 1, gridColumn: 1, visibility: activeTab === "拓展材料" ? "visible" : "hidden" }}>
             <ExtendedModule />
           </div>
-          <div className={`h-full ${activeTab === "资料上传" ? "block" : "hidden"}`}>
+          <div className="p-6 overflow-hidden" style={{ gridRow: 1, gridColumn: 1, visibility: activeTab === "资料上传" ? "visible" : "hidden" }}>
             <UploadModule />
           </div>
         </div>

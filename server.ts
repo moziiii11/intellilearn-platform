@@ -139,6 +139,7 @@ function buildProfileResponse(username: string, behavioralEvents: any[], profile
   if (!hasEvents && Object.keys(profile?.abilityScores || {}).length === 0) {
     return {
       name: username,
+      ...profile,
       calendar: { totalActive: 0, maxStreak: 0, data: [] },
       trendData: [],
       abilityScores: {},
@@ -1062,6 +1063,18 @@ async function updateProfileFromConversation(username: string, conversationMessa
     });
 
     console.log(`[Profile] Successfully updated for ${username} (two-phase)`);
+
+    // 同步到 MySQL（atomicDBUpdate 只写了 JSON，MySQL 是主存储必须同步）
+    try {
+      const latestProfile = readDB().users[username]?.profile;
+      if (latestProfile && mysqlAvailable) {
+        await mysqlSaveProfile(username, latestProfile);
+        console.log(`[Profile] Synced to MySQL for ${username}`);
+      }
+    } catch (e: any) {
+      console.error('[Profile] MySQL sync failed:', e.message);
+    }
+
     broadcastProfileUpdate(username);
 
   } catch (e) {
